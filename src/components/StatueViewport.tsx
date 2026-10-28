@@ -26,6 +26,14 @@ export interface StatueViewportHandle {
   rotateTurntableBy: (angleRad: number) => void;
   zoomBy: (scaleFactor: number) => void;
   triggerCelebrationSpin: () => void;
+  exportCanvasSnapshot: () => {
+    partTextures: Record<string, string>;
+    previewDataUrl: string;
+  } | null;
+  restoreCanvasSnapshot: (
+    targetAnimalId: AnimalId,
+    partTextures: Record<string, string>
+  ) => Promise<void>;
 }
 
 interface StatueViewportProps {
@@ -40,6 +48,7 @@ interface StatueViewportProps {
   onPartPainted: (partId: string, colorHex: string) => void;
   onPartErased: (partId: string) => void;
   onPartHovered: (partId: string | null) => void;
+  onStrokeFinished?: () => void;
 }
 
 // Pre-allocated math & color helpers at module scope (Zero GC in render loop)
@@ -90,6 +99,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       onPartPainted,
       onPartErased,
       onPartHovered,
+      onStrokeFinished,
     },
     ref
   ) => {
@@ -108,6 +118,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       onPartPainted,
       onPartErased,
       onPartHovered,
+      onStrokeFinished,
     });
 
     useEffect(() => {
@@ -123,6 +134,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         onPartPainted,
         onPartErased,
         onPartHovered,
+        onStrokeFinished,
       };
     }, [
       animalId,
@@ -136,6 +148,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       onPartPainted,
       onPartErased,
       onPartHovered,
+      onStrokeFinished,
     ]);
 
     const sceneActionsRef = useRef<{
@@ -146,6 +159,14 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       celebrateSpin: () => void;
       rebuildAnimal: (id: AnimalId) => void;
       updateBrushAppearance: (hex: string, tool: BrushToolId, radiusPx: number) => void;
+      exportSnapshot: () => {
+        partTextures: Record<string, string>;
+        previewDataUrl: string;
+      } | null;
+      restoreSnapshot: (
+        targetAnimalId: AnimalId,
+        partTextures: Record<string, string>
+      ) => Promise<void>;
     } | null>(null);
 
     useImperativeHandle(ref, () => ({
@@ -154,6 +175,15 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       rotateTurntableBy: (angleRad: number) => sceneActionsRef.current?.rotateBy(angleRad),
       zoomBy: (scaleFactor: number) => sceneActionsRef.current?.zoomBy(scaleFactor),
       triggerCelebrationSpin: () => sceneActionsRef.current?.celebrateSpin(),
+      exportCanvasSnapshot: () => sceneActionsRef.current?.exportSnapshot() ?? null,
+      restoreCanvasSnapshot: async (
+        targetAnimalId: AnimalId,
+        partTextures: Record<string, string>
+      ) => {
+        if (sceneActionsRef.current) {
+          await sceneActionsRef.current.restoreSnapshot(targetAnimalId, partTextures);
+        }
+      },
     }));
 
     // Rebuild 3D statue when animalId changes
@@ -574,6 +604,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           spawnPaintDustAndTrail(hit.point, _surfaceNormal, "#FAF8F5", radius, true);
           soundEngine.playBrushStroke("erase_part");
           stateRef.current.onPartErased(meshData.partId);
+          stateRef.current.onStrokeFinished?.();
           return;
         }
 
@@ -587,6 +618,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           spawnPaintDustAndTrail(hit.point, _surfaceNormal, colorHex, 28, true);
           soundEngine.playPartFillSound();
           stateRef.current.onPartPainted(meshData.partId, colorHex);
+          stateRef.current.onStrokeFinished?.();
           return;
         }
 
@@ -740,9 +772,13 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         } else {
           activePointers.clear();
         }
+        const wasPainting = isPaintingStroke;
         isPaintingStroke = false;
         hasLastUv = false;
         controls.enabled = true;
+        if (wasPainting) {
+          stateRef.current.onStrokeFinished?.();
+        }
       };
 
       const domElem = renderer.domElement;
@@ -753,6 +789,8 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       window.addEventListener("pointerup", stopPaintingStroke);
       window.addEventListener("pointercancel", stopPaintingStroke);
       window.addEventListener("blur", () => stopPaintingStroke());
+
+      let currentAnimalBuiltId: AnimalId = stateRef.current.animalId;
 
       // Expose imperative actions to parent React UI
       sceneActionsRef.current = {
@@ -777,6 +815,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           bounceScale = 1.1;
           bounceVelocity = -1.8;
           soundEngine.playPartFillSound();
+          stateRef.current.onStrokeFinished?.();
         },
         rotateBy: (angle: number) => {
           targetTurntableRotY += angle;
@@ -799,7 +838,10 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           bounceVelocity = -2.0;
         },
         rebuildAnimal: (id: AnimalId) => {
-          loadAnimal(id);
+          if (currentAnimalBuiltId !== id) {
+            currentAnimalBuiltId = id;
+            loadAnimal(id);
+          }
         },
         updateBrushAppearance: (hex: string, tool: BrushToolId, radiusPx: number) => {
           const activeHex = tool === "eraser" || tool === "erase_part" ? "#F4ACB7" : hex;
@@ -812,6 +854,74 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           tipMesh.scale.set(tipWidthScale, 1, tipWidthScale);
           ferruleMesh.scale.set(ferruleScale, 1, ferruleScale);
           ringMesh.scale.set(tipWidthScale, 1, tipWidthScale);
+        },
+        exportSnapshot: () => {
+          if (!currentStatue) return null;
+          const partTextures: Record<string, string> = {};
+          currentStatue.paintableMeshes.forEach((m, idx) => {
+            const key = `${m.partId}#${idx}`;
+            partTextures[key] = m.canvas.toDataURL("image/webp", 0.85);
+          });
+
+          // Create compact 220x220 thumbnail of the 3D WebGL view
+          let previewDataUrl = "";
+          try {
+            const thumbCanvas = document.createElement("canvas");
+            thumbCanvas.width = 220;
+            thumbCanvas.height = 220;
+            const tCtx = thumbCanvas.getContext("2d");
+            if (tCtx) {
+              const srcW = renderer.domElement.width;
+              const srcH = renderer.domElement.height;
+              const side = Math.min(srcW, srcH);
+              const sx = (srcW - side) / 2;
+              const sy = (srcH - side) / 2;
+              renderer.render(scene, camera);
+              tCtx.drawImage(renderer.domElement, sx, sy, side, side, 0, 0, 220, 220);
+              previewDataUrl = thumbCanvas.toDataURL("image/webp", 0.82);
+            }
+          } catch {
+            // Ignore thumbnail errors
+          }
+
+          return { partTextures, previewDataUrl };
+        },
+        restoreSnapshot: async (
+          targetAnimalId: AnimalId,
+          partTextures: Record<string, string>
+        ) => {
+          if (currentAnimalBuiltId !== targetAnimalId || !currentStatue) {
+            currentAnimalBuiltId = targetAnimalId;
+            loadAnimal(targetAnimalId);
+          }
+          if (!currentStatue) return;
+
+          // First reset all meshes to clean plaster
+          currentStatue.paintableMeshes.forEach((m) => {
+            resetCanvasToPlaster(m.ctx, m.canvas.width, m.canvas.height, m.basePlasterType);
+            m.texture.needsUpdate = true;
+          });
+
+          const loadPromises = currentStatue.paintableMeshes.map((m, idx) => {
+            const key = `${m.partId}#${idx}`;
+            const dataUrl = partTextures[key];
+            if (!dataUrl) return Promise.resolve();
+            return new Promise<void>((resolve) => {
+              const img = new Image();
+              img.onload = () => {
+                m.ctx.clearRect(0, 0, m.canvas.width, m.canvas.height);
+                m.ctx.drawImage(img, 0, 0, m.canvas.width, m.canvas.height);
+                m.texture.needsUpdate = true;
+                resolve();
+              };
+              img.onerror = () => resolve();
+              img.src = dataUrl;
+            });
+          });
+
+          await Promise.all(loadPromises);
+          bounceScale = 1.08;
+          bounceVelocity = -1.6;
         },
       };
 

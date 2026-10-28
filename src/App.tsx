@@ -20,6 +20,14 @@ import {
 } from "./data/statuesData";
 import { StatueViewport, StatueViewportHandle } from "./components/StatueViewport";
 import { soundEngine } from "./audio/soundEngine";
+import {
+  SavedStatueVersion,
+  listSavedVersionsFromBrowser,
+  saveVersionToBrowser,
+  deleteVersionFromBrowser,
+  saveWorkingDraftToBrowser,
+  loadWorkingDraftFromBrowser,
+} from "./storage/versionStorage";
 
 type GameScreenState = "title" | "playing" | "paused" | "victory";
 
@@ -188,12 +196,140 @@ export default function App() {
   const [coachTip, setCoachTip] = useState<TeacherCoachTip | null>(null);
   const [isLoadingCoach, setIsLoadingCoach] = useState<boolean>(false);
 
+  // Browser Version Storage States (Lưu & Khôi phục phiên bản trên trình duyệt)
+  const [savedVersions, setSavedVersions] = useState<SavedStatueVersion[]>([]);
+  const [isVersionsModalOpen, setIsVersionsModalOpen] = useState<boolean>(false);
+  const [justSavedVersionBanner, setJustSavedVersionBanner] = useState<string | null>(null);
+  const autoSaveTimerRef = useRef<number | null>(null);
+
   const currentAnimal =
     ANIMAL_STATUES.find((a) => a.id === selectedAnimalId) || ANIMAL_STATUES[0];
   const currentStudioTheme =
     STUDIO_THEMES.find((t) => t.id === studioThemeId) || STUDIO_THEMES[0];
   const totalPartsCount = currentAnimal.parts.length;
   const paintedPartsCount = Object.keys(paintedParts).length;
+
+  // Load saved versions list & auto-restore last working draft from browser on initial mount
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const versions = await listSavedVersionsFromBrowser();
+      if (mounted) {
+        setSavedVersions(versions);
+      }
+      const draft = await loadWorkingDraftFromBrowser();
+      if (mounted && draft && draft.partTextures && Object.keys(draft.partTextures).length > 0) {
+        setSelectedAnimalId(draft.animalId);
+        if (draft.studioThemeId) {
+          setStudioThemeId(draft.studioThemeId);
+        }
+        setPaintedParts(draft.paintedParts || {});
+        window.setTimeout(() => {
+          viewportRef.current?.restoreCanvasSnapshot(draft.animalId, draft.partTextures);
+        }, 120);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Auto-save working draft to browser storage after painting strokes
+  const triggerAutoSaveDraft = useCallback(() => {
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = window.setTimeout(async () => {
+      const snap = viewportRef.current?.exportCanvasSnapshot();
+      if (!snap) return;
+      const draft: SavedStatueVersion = {
+        id: "working_draft",
+        versionName: `Bản nháp tự động · ${currentAnimal.nameVi}`,
+        animalId: selectedAnimalId,
+        animalNameVi: currentAnimal.nameVi,
+        studioThemeId,
+        paintedParts,
+        partTextures: snap.partTextures,
+        previewDataUrl: snap.previewDataUrl,
+        createdAt: Date.now(),
+      };
+      await saveWorkingDraftToBrowser(draft);
+    }, 350);
+  }, [currentAnimal.nameVi, paintedParts, selectedAnimalId, studioThemeId]);
+
+  // Save a named/numbered version snapshot to the browser
+  const handleSaveVersionSnapshot = useCallback(async () => {
+    const snap = viewportRef.current?.exportCanvasSnapshot();
+    if (!snap) return;
+
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const nextNumber = savedVersions.length + 1;
+    const versionName = `Bản #${nextNumber} · ${currentAnimal.nameVi} (${timeStr})`;
+
+    const newVersion: SavedStatueVersion = {
+      id: `ver-${selectedAnimalId}-${Date.now()}`,
+      versionName,
+      animalId: selectedAnimalId,
+      animalNameVi: currentAnimal.nameVi,
+      studioThemeId,
+      paintedParts: { ...paintedParts },
+      partTextures: snap.partTextures,
+      previewDataUrl: snap.previewDataUrl,
+      createdAt: Date.now(),
+    };
+
+    const updated = await saveVersionToBrowser(newVersion);
+    await saveWorkingDraftToBrowser(newVersion);
+    setSavedVersions(updated);
+    setJustSavedVersionBanner(`Đã lưu ${versionName}`);
+    soundEngine.playColorPick(8);
+    window.setTimeout(() => {
+      setJustSavedVersionBanner(null);
+    }, 2200);
+  }, [
+    currentAnimal.nameVi,
+    paintedParts,
+    savedVersions.length,
+    selectedAnimalId,
+    studioThemeId,
+  ]);
+
+  // Restore a saved version from the browser onto the 3D turntable
+  const handleRestoreVersion = useCallback(async (version: SavedStatueVersion) => {
+    setSelectedAnimalId(version.animalId);
+    if (version.studioThemeId) {
+      setStudioThemeId(version.studioThemeId);
+    }
+    setPaintedParts(version.paintedParts || {});
+    setHighlightedPartId(null);
+    setIsVersionsModalOpen(false);
+
+    await viewportRef.current?.restoreCanvasSnapshot(
+      version.animalId,
+      version.partTextures || {}
+    );
+    await saveWorkingDraftToBrowser(version);
+    soundEngine.playPartFillSound();
+    soundEngine.speakVi(
+      `Đã mở lại ${version.versionName}.`,
+      ANIMAL_STATUES.find((a) => a.id === version.animalId)?.nameEn
+    );
+  }, []);
+
+  // Delete a saved version from browser storage
+  const handleDeleteVersion = useCallback(
+    async (e: React.MouseEvent, id: string) => {
+      e.stopPropagation();
+      const updated = await deleteVersionFromBrowser(id);
+      setSavedVersions(updated);
+      soundEngine.playColorPick(1);
+    },
+    []
+  );
 
   // Toggle Mute / Unmute (Biểu tượng Loa Xanh / Loa Đỏ Tắt Tiếng)
   const handleToggleMute = useCallback(() => {
@@ -600,6 +736,7 @@ export default function App() {
         onPartPainted={handlePartPainted}
         onPartErased={handlePartErased}
         onPartHovered={() => {}}
+        onStrokeFinished={triggerAutoSaveDraft}
       />
 
       {/* 2. TITLE SCREEN OVERLAY */}
@@ -867,6 +1004,7 @@ export default function App() {
                   setPaintedParts({});
                   setHighlightedPartId(null);
                   soundEngine.playColorPick(0);
+                  triggerAutoSaveDraft();
                 }}
                 title="Làm mới tượng thạch cao trắng"
                 className="px-2 h-7 sm:h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] sm:text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0"
@@ -874,7 +1012,25 @@ export default function App() {
                 <span>🔄 Mới</span>
               </button>
 
-              {/* 7. Nền (Smart Eye-Care Dark Background Theme) */}
+              {/* 7. Lưu Bản Vẽ Nhanh Trên Trình Duyệt */}
+              <button
+                onClick={handleSaveVersionSnapshot}
+                title="Lưu phiên bản tượng đang tô vào trình duyệt"
+                className="px-2 h-7 sm:h-8 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-[11px] sm:text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0 shadow-xs"
+              >
+                <span>💾 Lưu Bản</span>
+              </button>
+
+              {/* 8. Mở Kho Phiên Bản Đã Lưu Trên Trình Duyệt */}
+              <button
+                onClick={() => setIsVersionsModalOpen(true)}
+                title="Xem và mở lại các phiên bản đã lưu trên trình duyệt"
+                className="px-2 h-7 sm:h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 font-bold text-[11px] sm:text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+              >
+                <span>📂 Phiên Bản ({savedVersions.length})</span>
+              </button>
+
+              {/* 9. Nền (Smart Eye-Care Dark Background Theme) */}
               <button
                 onClick={handleCycleStudioTheme}
                 title={`Đổi nền dịu mắt (${currentStudioTheme.labelVi})`}
@@ -883,7 +1039,7 @@ export default function App() {
                 <span>🌙 Nền</span>
               </button>
 
-              {/* 8. Thơ (View Poem & Spelling Card) */}
+              {/* 10. Thơ (View Poem & Spelling Card) */}
               <button
                 onClick={() => setGameState("paused")}
                 title="Xem bài thơ & đánh vần"
@@ -892,7 +1048,7 @@ export default function App() {
                 <span>📖 Thơ</span>
               </button>
 
-              {/* 9. Toàn Màn Hình (Fullscreen Mode Toggle - Phím F) */}
+              {/* 11. Toàn Màn Hình (Fullscreen Mode Toggle - Phím F) */}
               <button
                 onClick={handleToggleFullscreen}
                 title={
@@ -926,6 +1082,13 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          {/* INSTANT SAVE TOAST BANNER */}
+          {justSavedVersionBanner && (
+            <div className="pointer-events-none absolute top-13 left-1/2 -translate-x-1/2 z-30 bg-emerald-500 text-slate-950 font-bold text-xs px-3.5 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
+              <span>✓ {justSavedVersionBanner} (Đã lưu trên trình duyệt)</span>
+            </div>
+          )}
 
           {/* COMPACT HINT POPOVER (Visible when user clicks Gợi Ý) */}
           {coachTip && (
@@ -1282,7 +1445,119 @@ export default function App() {
         </div>
       )}
 
-      {/* 4. PAUSE / VICTORY MODAL */}
+      {/* 4. BROWSER SAVED VERSIONS MODAL (Kho Phiên Bản Đã Lưu Trên Trình Duyệt) */}
+      {isVersionsModalOpen && (
+        <div className="fixed inset-0 z-30 bg-slate-950/80 flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-[#151E2E] border border-slate-700 rounded-2xl max-w-xl w-full max-h-[86dvh] flex flex-col p-4 sm:p-5 shadow-2xl">
+            <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-700/80">
+              <div>
+                <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                  <span>📂 Các Phiên Bản Đã Lưu Trên Trình Duyệt</span>
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Tự động lưu nháp khi vẽ · Có thể lưu nhiều phiên bản khác nhau để mở lại bất kỳ lúc nào
+                </p>
+              </div>
+              <button
+                onClick={() => setIsVersionsModalOpen(false)}
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold text-sm cursor-pointer shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="py-3 flex items-center justify-between gap-2 flex-wrap">
+              <button
+                onClick={handleSaveVersionSnapshot}
+                className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs sm:text-sm cursor-pointer flex items-center gap-1.5 shadow-sm"
+              >
+                <span>💾 + Lưu Phiên Bản Hiện Tại ({currentAnimal.nameVi})</span>
+              </button>
+              <span className="text-xs font-mono text-slate-400">
+                Tổng cộng: {savedVersions.length} phiên bản
+              </span>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1 flex flex-col gap-2">
+              {savedVersions.length === 0 ? (
+                <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 text-center text-slate-400 text-xs sm:text-sm">
+                  Chưa có phiên bản nào được lưu riêng. Bấm nút{" "}
+                  <strong className="text-emerald-400">💾 Lưu Bản</strong> để lưu lại bức tượng 3D đang tô nhé!
+                </div>
+              ) : (
+                savedVersions.map((ver) => {
+                  const animalDef =
+                    ANIMAL_STATUES.find((a) => a.id === ver.animalId) || ANIMAL_STATUES[0];
+                  const paintedCount = Object.keys(ver.paintedParts || {}).length;
+                  const dateStr = new Date(ver.createdAt).toLocaleString("vi-VN", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    day: "2-digit",
+                    month: "2-digit",
+                  });
+
+                  return (
+                    <div
+                      key={ver.id}
+                      className="bg-slate-900/90 border border-slate-700/80 hover:border-slate-500 rounded-xl p-2.5 flex items-center justify-between gap-3 transition-colors"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        {ver.previewDataUrl ? (
+                          <img
+                            src={ver.previewDataUrl}
+                            alt={ver.versionName}
+                            className="w-14 h-14 rounded-lg object-cover border border-slate-700 bg-slate-950 shrink-0"
+                          />
+                        ) : (
+                          <div className="w-14 h-14 rounded-lg bg-slate-800 flex items-center justify-center text-2xl shrink-0">
+                            {ANIMAL_ICONS[ver.animalId]}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="text-xs sm:text-sm font-bold text-white truncate">
+                            {ANIMAL_ICONS[ver.animalId]} {ver.versionName}
+                          </div>
+                          <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                            Đã tô {paintedCount}/{animalDef.parts.length} bộ phận · Lưu lúc {dateStr}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => handleRestoreVersion(ver)}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs cursor-pointer"
+                        >
+                          Mở Lại
+                        </button>
+                        {ver.previewDataUrl && (
+                          <a
+                            href={ver.previewDataUrl}
+                            download={`${ver.versionName}.webp`}
+                            title="Tải ảnh chụp 3D về máy"
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 font-bold text-xs cursor-pointer"
+                          >
+                            📷 Ảnh
+                          </a>
+                        )}
+                        <button
+                          onClick={(e) => handleDeleteVersion(e, ver.id)}
+                          title="Xóa phiên bản này"
+                          className="px-2 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white font-bold text-xs cursor-pointer transition-colors"
+                        >
+                          Xóa
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. PAUSE / VICTORY MODAL */}
       {(gameState === "paused" || gameState === "victory") && (
         <div className="fixed inset-0 z-30 bg-slate-950/75 flex items-center justify-center p-4">
           <div className="bg-[#151E2E] border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl text-center">
