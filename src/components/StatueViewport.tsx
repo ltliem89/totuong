@@ -26,7 +26,7 @@ export interface StatueViewportHandle {
   rotateTurntableBy: (angleRad: number) => void;
   zoomBy: (scaleFactor: number) => void;
   triggerCelebrationSpin: () => void;
-  exportCanvasSnapshot: () => {
+  exportCanvasSnapshot: (includeThumbnail?: boolean) => {
     partTextures: Record<string, string>;
     previewDataUrl: string;
   } | null;
@@ -159,7 +159,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       celebrateSpin: () => void;
       rebuildAnimal: (id: AnimalId) => void;
       updateBrushAppearance: (hex: string, tool: BrushToolId, radiusPx: number) => void;
-      exportSnapshot: () => {
+      exportSnapshot: (includeThumbnail?: boolean) => {
         partTextures: Record<string, string>;
         previewDataUrl: string;
       } | null;
@@ -175,7 +175,8 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       rotateTurntableBy: (angleRad: number) => sceneActionsRef.current?.rotateBy(angleRad),
       zoomBy: (scaleFactor: number) => sceneActionsRef.current?.zoomBy(scaleFactor),
       triggerCelebrationSpin: () => sceneActionsRef.current?.celebrateSpin(),
-      exportCanvasSnapshot: () => sceneActionsRef.current?.exportSnapshot() ?? null,
+      exportCanvasSnapshot: (includeThumbnail = true) =>
+        sceneActionsRef.current?.exportSnapshot(includeThumbnail) ?? null,
       restoreCanvasSnapshot: async (
         targetAnimalId: AnimalId,
         partTextures: Record<string, string>
@@ -219,16 +220,14 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       const renderer = new THREE.WebGLRenderer({
         antialias: !isSoftwareGl,
         powerPreference: "high-performance",
-        preserveDrawingBuffer: true,
       });
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       // Soft eye-comfort exposure so the white plaster statue looks dimensional without harsh glare
       renderer.toneMappingExposure = 0.96;
-      renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.5));
       renderer.setSize(container.clientWidth, container.clientHeight);
-      renderer.shadowMap.enabled = !isSoftwareGl;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.shadowMap.enabled = false;
 
       container.innerHTML = "";
       container.appendChild(renderer.domElement);
@@ -283,18 +282,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
 
       const keyLight = new THREE.DirectionalLight(0xfff3db, 1.12);
       keyLight.position.set(4.5, 7.5, 5.5);
-      keyLight.castShadow = !isSoftwareGl;
-      keyLight.shadow.mapSize.width = 1024;
-      keyLight.shadow.mapSize.height = 1024;
-      keyLight.shadow.camera.near = 0.5;
-      keyLight.shadow.camera.far = 20;
-      const d = 3.8;
-      keyLight.shadow.camera.left = -d;
-      keyLight.shadow.camera.right = d;
-      keyLight.shadow.camera.top = d;
-      keyLight.shadow.camera.bottom = -d;
-      keyLight.shadow.bias = -0.0005;
-      keyLight.shadow.normalBias = 0.02;
+      keyLight.castShadow = false;
       scene.add(keyLight);
 
       const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.85);
@@ -562,6 +550,8 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       let lastAnnouncedPart: string | null = null;
       let lastAnnouncedTime = 0;
 
+      let lastMoveTime = 0;
+
       const updateMouseCoords = (clientX: number, clientY: number) => {
         const rect = renderer.domElement.getBoundingClientRect();
         _mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -570,7 +560,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
 
       const findPaintableMeshData = (mesh: THREE.Object3D): PaintableMeshData | undefined => {
         if (!currentStatue) return undefined;
-        return currentStatue.paintableMeshes.find((m) => m.mesh === mesh);
+        return currentStatue.meshToDataMap.get(mesh);
       };
 
       const performPaintAtHit = (
@@ -597,6 +587,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           const partMeshes = currentStatue.partMeshesMap.get(meshData.partId) || [meshData];
           partMeshes.forEach((m) => {
             resetCanvasToPlaster(m.ctx, m.canvas.width, m.canvas.height, m.basePlasterType);
+            m.isModified = false;
             m.texture.needsUpdate = true;
           });
           bounceScale = 0.94;
@@ -685,14 +676,14 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
 
         updateMouseCoords(e.clientX, e.clientY);
         raycaster.setFromCamera(_mouse, camera);
-        const meshes = currentStatue.paintableMeshes.map((m) => m.mesh);
-        const intersects = raycaster.intersectObjects(meshes, false);
+        const intersects = raycaster.intersectObjects(currentStatue.paintableMeshObjects, false);
 
         if (intersects.length > 0) {
           // 1-finger touch or Left-click directly on the 3D animal statue in Paint Mode -> Disable orbit rotation and paint!
           controls.enabled = false;
           isPaintingStroke = true;
           hasLastUv = false;
+          lastMoveTime = performance.now();
           performPaintAtHit(intersects[0], true);
         } else {
           // 1-finger touch or Left-click on background -> allow OrbitControls to rotate camera smoothly!
@@ -718,10 +709,31 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           return;
         }
 
+        // Skip hover raycasting on touch screens when not actively painting
+        if (!isPaintingStroke && e.pointerType === "touch") {
+          return;
+        }
+
+        // Throttle raycasting to ~70Hz while painting (14ms) and ~22Hz when hovering with mouse (45ms)
+        const now = performance.now();
+        const minInterval = isPaintingStroke ? 14 : 45;
+        if (now - lastMoveTime < minInterval) {
+          return;
+        }
+        lastMoveTime = now;
+
         updateMouseCoords(e.clientX, e.clientY);
         raycaster.setFromCamera(_mouse, camera);
-        const meshes = currentStatue.paintableMeshes.map((m) => m.mesh);
-        const intersects = raycaster.intersectObjects(meshes, false);
+
+        let intersects: THREE.Intersection[];
+        if (isPaintingStroke && lastHitMesh) {
+          intersects = raycaster.intersectObject(lastHitMesh, false);
+          if (intersects.length === 0) {
+            intersects = raycaster.intersectObjects(currentStatue.paintableMeshObjects, false);
+          }
+        } else {
+          intersects = raycaster.intersectObjects(currentStatue.paintableMeshObjects, false);
+        }
 
         if (intersects.length > 0) {
           const hit = intersects[0];
@@ -798,6 +810,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           if (!currentStatue) return;
           currentStatue.paintableMeshes.forEach((m) => {
             resetCanvasToPlaster(m.ctx, m.canvas.width, m.canvas.height, m.basePlasterType);
+            m.isModified = false;
             m.texture.needsUpdate = true;
           });
           bounceScale = 0.9;
@@ -855,33 +868,36 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           ferruleMesh.scale.set(ferruleScale, 1, ferruleScale);
           ringMesh.scale.set(tipWidthScale, 1, tipWidthScale);
         },
-        exportSnapshot: () => {
+        exportSnapshot: (includeThumbnail = true) => {
           if (!currentStatue) return null;
           const partTextures: Record<string, string> = {};
           currentStatue.paintableMeshes.forEach((m, idx) => {
+            if (!m.isModified) return;
             const key = `${m.partId}#${idx}`;
-            partTextures[key] = m.canvas.toDataURL("image/webp", 0.85);
+            partTextures[key] = m.canvas.toDataURL("image/webp", 0.78);
           });
 
-          // Create compact 220x220 thumbnail of the 3D WebGL view
+          // Create compact 220x220 thumbnail of the 3D WebGL view only when requested
           let previewDataUrl = "";
-          try {
-            const thumbCanvas = document.createElement("canvas");
-            thumbCanvas.width = 220;
-            thumbCanvas.height = 220;
-            const tCtx = thumbCanvas.getContext("2d");
-            if (tCtx) {
-              const srcW = renderer.domElement.width;
-              const srcH = renderer.domElement.height;
-              const side = Math.min(srcW, srcH);
-              const sx = (srcW - side) / 2;
-              const sy = (srcH - side) / 2;
-              renderer.render(scene, camera);
-              tCtx.drawImage(renderer.domElement, sx, sy, side, side, 0, 0, 220, 220);
-              previewDataUrl = thumbCanvas.toDataURL("image/webp", 0.82);
+          if (includeThumbnail) {
+            try {
+              const thumbCanvas = document.createElement("canvas");
+              thumbCanvas.width = 220;
+              thumbCanvas.height = 220;
+              const tCtx = thumbCanvas.getContext("2d");
+              if (tCtx) {
+                const srcW = renderer.domElement.width;
+                const srcH = renderer.domElement.height;
+                const side = Math.min(srcW, srcH);
+                const sx = (srcW - side) / 2;
+                const sy = (srcH - side) / 2;
+                renderer.render(scene, camera);
+                tCtx.drawImage(renderer.domElement, sx, sy, side, side, 0, 0, 220, 220);
+                previewDataUrl = thumbCanvas.toDataURL("image/webp", 0.8);
+              }
+            } catch {
+              // Ignore thumbnail errors
             }
-          } catch {
-            // Ignore thumbnail errors
           }
 
           return { partTextures, previewDataUrl };
@@ -899,6 +915,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           // First reset all meshes to clean plaster
           currentStatue.paintableMeshes.forEach((m) => {
             resetCanvasToPlaster(m.ctx, m.canvas.width, m.canvas.height, m.basePlasterType);
+            m.isModified = false;
             m.texture.needsUpdate = true;
           });
 
@@ -911,6 +928,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
               img.onload = () => {
                 m.ctx.clearRect(0, 0, m.canvas.width, m.canvas.height);
                 m.ctx.drawImage(img, 0, 0, m.canvas.width, m.canvas.height);
+                m.isModified = true;
                 m.texture.needsUpdate = true;
                 resolve();
               };

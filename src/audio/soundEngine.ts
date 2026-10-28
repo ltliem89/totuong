@@ -376,37 +376,53 @@ class SoundEngine {
     }
   }
 
-  // Instant Vietnamese + English pronunciation via Web Speech API
+  private cachedViVoice: SpeechSynthesisVoice | null = null;
+  private speechTimer: number | null = null;
+
+  // Instant non-blocking Vietnamese + English pronunciation via Web Speech API
   public speakVi(textVi: string, textEn?: string) {
     if (this.isMuted) return;
     if (!("speechSynthesis" in window)) return;
 
-    try {
-      window.speechSynthesis.cancel();
-      const utterVi = new SpeechSynthesisUtterance(textVi);
-      utterVi.lang = "vi-VN";
-      utterVi.rate = 0.92;
-      utterVi.pitch = 1.15;
-
-      const voices = window.speechSynthesis.getVoices();
-      const viVoice = voices.find((v) => v.lang.toLowerCase().includes("vi"));
-      if (viVoice) utterVi.voice = viVoice;
-
-      if (textEn) {
-        utterVi.onend = () => {
-          if (this.isMuted) return;
-          const utterEn = new SpeechSynthesisUtterance(textEn);
-          utterEn.lang = "en-US";
-          utterEn.rate = 0.88;
-          utterEn.pitch = 1.1;
-          window.speechSynthesis.speak(utterEn);
-        };
-      }
-
-      window.speechSynthesis.speak(utterVi);
-    } catch {
-      // Ignore speech synthesis errors on restricted browsers
+    if (this.speechTimer) {
+      window.clearTimeout(this.speechTimer);
     }
+
+    // Defer speech synthesis off the current pointer/render frame so it never causes input lag
+    this.speechTimer = window.setTimeout(() => {
+      if (this.isMuted) return;
+      try {
+        window.speechSynthesis.cancel();
+        const utterVi = new SpeechSynthesisUtterance(textVi);
+        utterVi.lang = "vi-VN";
+        utterVi.rate = 0.94;
+        utterVi.pitch = 1.15;
+
+        if (!this.cachedViVoice) {
+          const voices = window.speechSynthesis.getVoices();
+          this.cachedViVoice =
+            voices.find((v) => v.lang.toLowerCase().includes("vi")) || null;
+        }
+        if (this.cachedViVoice) {
+          utterVi.voice = this.cachedViVoice;
+        }
+
+        if (textEn) {
+          utterVi.onend = () => {
+            if (this.isMuted) return;
+            const utterEn = new SpeechSynthesisUtterance(textEn);
+            utterEn.lang = "en-US";
+            utterEn.rate = 0.9;
+            utterEn.pitch = 1.1;
+            window.speechSynthesis.speak(utterEn);
+          };
+        }
+
+        window.speechSynthesis.speak(utterVi);
+      } catch {
+        // Ignore speech synthesis errors on restricted browsers
+      }
+    }, 16);
   }
 
   // High-quality server TTS via gemini-3.8-flash-lite-tts with fallback to speakVi

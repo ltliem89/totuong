@@ -19,6 +19,7 @@ import {
   SavedBrushPreset,
 } from "./data/statuesData";
 import { StatueViewport, StatueViewportHandle } from "./components/StatueViewport";
+import { WritingChallengeModal } from "./components/WritingChallengeModal";
 import { soundEngine } from "./audio/soundEngine";
 import {
   SavedStatueVersion,
@@ -199,6 +200,7 @@ export default function App() {
   // Browser Version Storage States (Lưu & Khôi phục phiên bản trên trình duyệt)
   const [savedVersions, setSavedVersions] = useState<SavedStatueVersion[]>([]);
   const [isVersionsModalOpen, setIsVersionsModalOpen] = useState<boolean>(false);
+  const [isWritingChallengeOpen, setIsWritingChallengeOpen] = useState<boolean>(false);
   const [justSavedVersionBanner, setJustSavedVersionBanner] = useState<string | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
 
@@ -234,13 +236,13 @@ export default function App() {
     };
   }, []);
 
-  // Auto-save working draft to browser storage after painting strokes
+  // Auto-save working draft to browser storage after idle pause (non-blocking, no thumbnail)
   const triggerAutoSaveDraft = useCallback(() => {
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
     }
     autoSaveTimerRef.current = window.setTimeout(async () => {
-      const snap = viewportRef.current?.exportCanvasSnapshot();
+      const snap = viewportRef.current?.exportCanvasSnapshot(false);
       if (!snap) return;
       const draft: SavedStatueVersion = {
         id: "working_draft",
@@ -250,11 +252,11 @@ export default function App() {
         studioThemeId,
         paintedParts,
         partTextures: snap.partTextures,
-        previewDataUrl: snap.previewDataUrl,
+        previewDataUrl: "",
         createdAt: Date.now(),
       };
       await saveWorkingDraftToBrowser(draft);
-    }, 350);
+    }, 2500);
   }, [currentAnimal.nameVi, paintedParts, selectedAnimalId, studioThemeId]);
 
   // Save a named/numbered version snapshot to the browser
@@ -581,33 +583,37 @@ export default function App() {
   // Handle when Bé Mỹ paints a part on the 3D statue
   const handlePartPainted = useCallback(
     (partId: string, colorHex: string) => {
-      const partDef = currentAnimal.parts.find((p) => p.id === partId);
-      const colorDef = PALETTE_COLORS.find(
-        (c) => c.hex.toLowerCase() === colorHex.toLowerCase()
-      );
-
       if (highlightedPartId === partId) {
         setHighlightedPartId(null);
       }
 
       setPaintedParts((prev) => {
+        if (prev[partId] === colorHex) {
+          return prev;
+        }
         const isNewPart = !prev[partId];
         const next = { ...prev, [partId]: colorHex };
 
-        if (isNewPart && partDef) {
-          const colorText = colorDef ? colorDef.nameVi : "màu đẹp";
-          soundEngine.speakVi(`${partDef.nameVi}, ${colorText}.`, partDef.nameEn);
+        if (isNewPart) {
+          const partDef = currentAnimal.parts.find((p) => p.id === partId);
+          const colorDef = PALETTE_COLORS.find(
+            (c) => c.hex.toLowerCase() === colorHex.toLowerCase()
+          );
+          if (partDef) {
+            const colorText = colorDef ? colorDef.nameVi : "màu đẹp";
+            soundEngine.speakVi(`${partDef.nameVi}, ${colorText}.`, partDef.nameEn);
 
-          if (Object.keys(next).length === currentAnimal.parts.length) {
-            window.setTimeout(() => {
-              soundEngine.playVictoryFanfare();
-              viewportRef.current?.triggerCelebrationSpin();
-              setGameState("victory");
-              soundEngine.speakVi(
-                `Hoan hô bé Mỹ! Bé đã tô xong tượng ${currentAnimal.nameVi}!`,
-                currentAnimal.nameEn
-              );
-            }, 650);
+            if (Object.keys(next).length === currentAnimal.parts.length) {
+              window.setTimeout(() => {
+                soundEngine.playVictoryFanfare();
+                viewportRef.current?.triggerCelebrationSpin();
+                setGameState("victory");
+                soundEngine.speakVi(
+                  `Hoan hô bé Mỹ! Bé đã tô xong tượng ${currentAnimal.nameVi}!`,
+                  currentAnimal.nameEn
+                );
+              }, 650);
+            }
           }
         }
         return next;
@@ -988,6 +994,18 @@ export default function App() {
                 <span>💡 Gợi Ý</span>
               </button>
 
+              {/* 4b. Tập Viết Chữ Cái & Số (Letter & Number Writing Challenge) */}
+              <button
+                onClick={() => {
+                  setIsWritingChallengeOpen(true);
+                  soundEngine.playColorPick(3);
+                }}
+                title="Thử thách tập viết chữ cái A-Z và chữ số 1-10 trên vở ô ly"
+                className="px-2 h-7 sm:h-8 rounded-lg bg-pink-500 hover:bg-pink-400 text-slate-950 font-bold text-[11px] sm:text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0 shadow-xs"
+              >
+                <span>✍️ Tập Viết</span>
+              </button>
+
               {/* 5. Mẫu (Auto-Paint Sample Statue) */}
               <button
                 onClick={() => viewportRef.current?.autoPaintSample()}
@@ -1116,66 +1134,59 @@ export default function App() {
             </div>
           )}
 
-          {/* B. MIDDLE WORKSPACE ROW: Unified Right Panel (2-Column Grid so ALL Brush Types & Saved Brushes fit without scrolling) */}
-          <div className="flex-1 min-h-0 relative flex items-center justify-end py-1 pointer-events-none">
-            <div className="flex items-center gap-1 max-h-full pointer-events-none">
+          {/* B. MIDDLE WORKSPACE ROW: Unified Right Panel (1 Vertical Column Docked Flush Against Right Screen Edge) */}
+          <div className="flex-1 min-h-0 relative flex items-center justify-end py-1 -mr-1.5 sm:-mr-2.5 pointer-events-none">
+            <div className="flex items-center max-h-full pointer-events-none">
               <button
                 onClick={() => setIsRightBrushPanelCollapsed((prev) => !prev)}
-                title={isRightBrushPanelCollapsed ? "Mở bảng bút & kiểu bút (H)" : "Thu gọn bảng bút (H)"}
-                className="pointer-events-auto w-5 h-11 rounded-l-xl bg-[#151E2E]/95 border border-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center shadow-md cursor-pointer text-xs font-bold shrink-0"
+                title={isRightBrushPanelCollapsed ? "Mở thanh bút (H)" : "Thu gọn thanh bút (H)"}
+                className="pointer-events-auto w-4 sm:w-5 h-10 rounded-l-xl bg-[#151E2E]/95 border border-r-0 border-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center shadow-md cursor-pointer text-xs font-bold shrink-0"
               >
                 {isRightBrushPanelCollapsed ? "◂" : "▸"}
               </button>
 
               {!isRightBrushPanelCollapsed && (
-                <div className="pointer-events-auto bg-[#151E2E]/95 border border-slate-700/80 rounded-2xl p-1.5 sm:p-2 shadow-2xl flex flex-col gap-1.5 max-h-full overflow-y-auto w-[148px] sm:w-[162px]">
-                  {/* SECTION 1: KIỂU BÚT & TẨY XÓA (2-column compact grid so all 7 tools are immediately visible) */}
-                  <div className="flex flex-col gap-1 pb-1.5 border-b border-slate-700/80">
-                    <span className="text-[9px] font-mono font-bold text-sky-300 uppercase text-center tracking-tight">
-                      Kiểu Bút & Tẩy Xóa
-                    </span>
-                    <div className="grid grid-cols-2 gap-1">
-                      {BRUSH_TOOLS.map((tool) => {
-                        const isActive = selectedTool === tool.id;
-                        const isEraser = Boolean(tool.isEraser);
-                        return (
-                          <button
-                            key={tool.id}
-                            onClick={() => handlePickTool(tool.id)}
-                            title={tool.descVi}
-                            className={`px-1.5 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                              tool.id === "erase_part" ? "col-span-2 justify-center" : ""
-                            } ${
-                              isActive
-                                ? isEraser
-                                  ? "bg-rose-500 text-white ring-2 ring-white shadow-sm"
-                                  : "bg-slate-900 text-white ring-2 ring-white shadow-sm"
-                                : isEraser
-                                  ? "bg-rose-500/15 text-rose-200 border border-rose-400/30 hover:bg-rose-500/25"
-                                  : "bg-slate-800/90 text-slate-300 hover:bg-slate-700 hover:text-white"
-                            }`}
-                            style={
-                              isActive && !isEraser
-                                ? {
-                                    background: `linear-gradient(135deg, ${selectedColor.hex}55 0%, #0f172a 95%)`,
-                                  }
-                                : undefined
-                            }
-                          >
-                            <span
-                              className="w-2 h-2 rounded-xs border border-white/80 shrink-0"
-                              style={{
-                                backgroundColor: isEraser ? "#F43F5E" : selectedColor.hex,
-                              }}
-                            />
-                            <span className="truncate">{TOOL_COMPACT_LABELS[tool.id]}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                <div className="pointer-events-auto bg-[#151E2E]/95 border border-r-0 border-slate-700/80 rounded-l-2xl rounded-r-none p-1 sm:p-1.5 shadow-2xl flex flex-col gap-1 max-h-full overflow-y-auto w-[84px] sm:w-[92px]">
+                  {/* SECTION 1: 1-Column Vertical Brush & Eraser Tools (No header text) */}
+                  <div className="flex flex-col gap-1 pb-1 border-b border-slate-700/80">
+                    {BRUSH_TOOLS.map((tool) => {
+                      const isActive = selectedTool === tool.id;
+                      const isEraser = Boolean(tool.isEraser);
+                      return (
+                        <button
+                          key={tool.id}
+                          onClick={() => handlePickTool(tool.id)}
+                          title={tool.descVi}
+                          className={`w-full px-1.5 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                            isActive
+                              ? isEraser
+                                ? "bg-rose-500 text-white ring-1 ring-white shadow-xs"
+                                : "bg-slate-900 text-white ring-1 ring-white shadow-xs"
+                              : isEraser
+                                ? "bg-rose-500/15 text-rose-200 border border-rose-400/30 hover:bg-rose-500/25"
+                                : "bg-slate-800/90 text-slate-300 hover:bg-slate-700 hover:text-white"
+                          }`}
+                          style={
+                            isActive && !isEraser
+                              ? {
+                                  background: `linear-gradient(135deg, ${selectedColor.hex}55 0%, #0f172a 95%)`,
+                                }
+                              : undefined
+                          }
+                        >
+                          <span
+                            className="w-2 h-2 rounded-xs border border-white/80 shrink-0"
+                            style={{
+                              backgroundColor: isEraser ? "#F43F5E" : selectedColor.hex,
+                            }}
+                          />
+                          <span className="truncate">{TOOL_COMPACT_LABELS[tool.id]}</span>
+                        </button>
+                      );
+                    })}
                   </div>
 
-                  {/* SECTION 2: BÚT ĐÃ LƯU (2-column vivid brush cards showing Color + Thickness + px) */}
+                  {/* SECTION 2: BÚT LƯU (1-Column Vertical Saved Brushes) */}
                   <div
                     className="flex flex-col gap-1"
                     title="Các bút đã lưu (Bấm để chọn, Chuột phải hoặc bấm × để xóa)"
@@ -1183,7 +1194,7 @@ export default function App() {
                     <span className="text-[9px] font-mono font-bold text-amber-300 uppercase text-center tracking-tight">
                       Bút Lưu ({savedBrushes.length})
                     </span>
-                    <div className="grid grid-cols-2 gap-1">
+                    <div className="flex flex-col gap-1">
                       {savedBrushes.map((preset) => {
                         const isCurrent =
                           selectedColor.id === preset.colorId &&
@@ -1194,7 +1205,7 @@ export default function App() {
                         const isPop = justSavedBrushId === preset.id;
                         const strokeBarHeight = Math.max(
                           3,
-                          Math.min(14, Math.round(preset.radiusPx * 0.3))
+                          Math.min(12, Math.round(preset.radiusPx * 0.28))
                         );
 
                         return (
@@ -1203,11 +1214,11 @@ export default function App() {
                               onClick={() => handleSelectSavedBrush(preset)}
                               onContextMenu={(e) => handleDeleteSavedBrush(e, preset.id)}
                               title={`Bút ${preset.colorNameVi} · ${preset.radiusPx}px (Chuột phải hoặc bấm × để xóa)`}
-                              className={`relative w-full h-7 sm:h-8 rounded-lg flex items-center justify-between px-1.5 transition-all cursor-pointer ${
+                              className={`relative w-full h-6 sm:h-7 rounded-lg flex items-center justify-between px-1.5 transition-all cursor-pointer ${
                                 isCurrent
-                                  ? "ring-2 ring-white shadow-md scale-103 z-10"
-                                  : "hover:scale-102 border border-white/25 opacity-95 hover:opacity-100"
-                              } ${isPop ? "ring-2 ring-amber-300 scale-108" : ""}`}
+                                  ? "ring-1 ring-white shadow-sm z-10"
+                                  : "border border-white/25 opacity-95 hover:opacity-100"
+                              } ${isPop ? "ring-2 ring-amber-300" : ""}`}
                               style={{
                                 background: `linear-gradient(135deg, ${preset.colorHex} 0%, ${preset.colorHex}dd 65%, #0f172a 100%)`,
                               }}
@@ -1241,7 +1252,7 @@ export default function App() {
                               <button
                                 onClick={(e) => handleDeleteSavedBrush(e, preset.id)}
                                 title="Xóa bút lưu này"
-                                className="absolute -top-1.5 -left-1.5 z-20 w-4 h-4 rounded-full bg-rose-600 hover:bg-rose-500 text-white border border-white text-[10px] font-bold leading-none flex items-center justify-center shadow-md cursor-pointer"
+                                className="absolute -top-1 -left-1 z-20 w-3.5 h-3.5 rounded-full bg-rose-600 hover:bg-rose-500 text-white border border-white text-[9px] font-bold leading-none flex items-center justify-center shadow-md cursor-pointer"
                               >
                                 ×
                               </button>
@@ -1557,7 +1568,15 @@ export default function App() {
         </div>
       )}
 
-      {/* 5. PAUSE / VICTORY MODAL */}
+      {/* 5. LETTER & NUMBER WRITING CHALLENGE MODAL (Thử Thách Tập Viết Chữ Cái & Số) */}
+      <WritingChallengeModal
+        isOpen={isWritingChallengeOpen}
+        onClose={() => setIsWritingChallengeOpen(false)}
+        selectedColor={selectedColor}
+        onSelectColor={handlePickColor}
+      />
+
+      {/* 6. PAUSE / VICTORY MODAL */}
       {(gameState === "paused" || gameState === "victory") && (
         <div className="fixed inset-0 z-30 bg-slate-950/75 flex items-center justify-center p-4">
           <div className="bg-[#151E2E] border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl text-center">

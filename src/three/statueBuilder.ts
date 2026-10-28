@@ -9,12 +9,15 @@ export interface PaintableMeshData {
   texture: THREE.CanvasTexture;
   material: THREE.MeshStandardMaterial;
   basePlasterType: "white" | "eye" | "detail";
+  isModified: boolean;
 }
 
 export interface BuiltStatue {
   group: THREE.Group;
   turntable: THREE.Group;
   paintableMeshes: PaintableMeshData[];
+  paintableMeshObjects: THREE.Mesh[];
+  meshToDataMap: Map<THREE.Object3D, PaintableMeshData>;
   partMeshesMap: Map<string, PaintableMeshData[]>;
   dispose: () => void;
 }
@@ -149,6 +152,7 @@ export function fillCanvasWithColor(
     ctx.fill();
   }
 
+  data.isModified = true;
   texture.needsUpdate = true;
 }
 
@@ -167,6 +171,7 @@ export function paintBrushStrokeOnCanvas(
 
   if (tool === "erase_part") {
     resetCanvasToPlaster(data.ctx, data.canvas.width, data.canvas.height, data.basePlasterType);
+    data.isModified = false;
     data.texture.needsUpdate = true;
     return;
   }
@@ -216,6 +221,7 @@ export function paintBrushStrokeOnCanvas(
     }
 
     ctx.restore();
+    data.isModified = true;
     texture.needsUpdate = true;
     return;
   }
@@ -317,6 +323,7 @@ export function paintBrushStrokeOnCanvas(
     }
   }
 
+  data.isModified = true;
   texture.needsUpdate = true;
 }
 
@@ -362,13 +369,15 @@ export function buildAnimalStatue(
   const statueGroup = new THREE.Group();
 
   const paintableMeshes: PaintableMeshData[] = [];
+  const paintableMeshObjects: THREE.Mesh[] = [];
+  const meshToDataMap = new Map<THREE.Object3D, PaintableMeshData>();
   const partMeshesMap = new Map<string, PaintableMeshData[]>();
   const geometriesToDispose: THREE.BufferGeometry[] = [];
   const materialsToDispose: THREE.Material[] = [];
   const texturesToDispose: THREE.Texture[] = [];
 
   // Build Painter's Wooden Turntable Pedestal (Bàn xoay tô tượng thạch cao)
-  const baseGeo = new THREE.CylinderGeometry(2.15, 2.35, 0.28, 48);
+  const baseGeo = new THREE.CylinderGeometry(2.15, 2.35, 0.28, 36);
   const baseMat = new THREE.MeshStandardMaterial({
     color: 0xe6d5b8,
     roughness: 0.45,
@@ -377,10 +386,9 @@ export function buildAnimalStatue(
   const baseMesh = new THREE.Mesh(baseGeo, baseMat);
   baseMesh.position.y = -0.14;
   baseMesh.receiveShadow = true;
-  baseMesh.castShadow = true;
   turntable.add(baseMesh);
 
-  const rimGeo = new THREE.TorusGeometry(2.12, 0.055, 16, 64);
+  const rimGeo = new THREE.TorusGeometry(2.12, 0.055, 12, 48);
   const rimMat = new THREE.MeshStandardMaterial({
     color: 0xd4a373,
     roughness: 0.35,
@@ -409,15 +417,17 @@ export function buildAnimalStatue(
     ensureNormalizedUVs(geometry);
     geometriesToDispose.push(geometry);
 
+    // 512x512 with generateMipmaps=false provides 4x faster GPU texture uploads with zero frame stutter
     const canvas = document.createElement("canvas");
-    canvas.width = 1024;
-    canvas.height = 1024;
+    canvas.width = 512;
+    canvas.height = 512;
     const ctx = canvas.getContext("2d")!;
-    resetCanvasToPlaster(ctx, 1024, 1024, basePlasterType);
+    resetCanvasToPlaster(ctx, 512, 512, basePlasterType);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = maxAnisotropy;
+    texture.generateMipmaps = false;
+    texture.anisotropy = 1;
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
     texturesToDispose.push(texture);
@@ -435,8 +445,6 @@ export function buildAnimalStatue(
     mesh.position.set(...position);
     mesh.rotation.set(...rotation);
     mesh.scale.set(...scale);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
     mesh.userData.partId = partId;
 
     statueGroup.add(mesh);
@@ -449,8 +457,11 @@ export function buildAnimalStatue(
       texture,
       material,
       basePlasterType,
+      isModified: false,
     };
     paintableMeshes.push(item);
+    paintableMeshObjects.push(mesh);
+    meshToDataMap.set(mesh, item);
 
     const list = partMeshesMap.get(partId) || [];
     list.push(item);
@@ -695,6 +706,8 @@ export function buildAnimalStatue(
     group: rootGroup,
     turntable,
     paintableMeshes,
+    paintableMeshObjects,
+    meshToDataMap,
     partMeshesMap,
     dispose: () => {
       geometriesToDispose.forEach((g) => g.dispose());
