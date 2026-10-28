@@ -78,9 +78,77 @@ export default function App() {
     };
   }, []);
 
-  // Collapsible states for the unified panels
+  // Collapsible states for the unified panels & Fullscreen mode
   const [isRightBrushPanelCollapsed, setIsRightBrushPanelCollapsed] = useState<boolean>(false);
   const [isBottomColorBarCollapsed, setIsBottomColorBarCollapsed] = useState<boolean>(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  // Sync fullscreen state with browser Fullscreen API events
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const doc = document as Document & { webkitFullscreenElement?: Element | null };
+      const active = Boolean(doc.fullscreenElement || doc.webkitFullscreenElement);
+      setIsFullscreen(active);
+      const h = window.visualViewport?.height || window.innerHeight;
+      setViewportHeightPx(Math.round(h));
+      window.setTimeout(() => {
+        window.dispatchEvent(new Event("resize"));
+      }, 60);
+    };
+
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
+    };
+  }, []);
+
+  // Toggle Fullscreen Mode (Works on Desktop, Android Tablet/Phone, iPad, and iframe fallback)
+  const handleToggleFullscreen = useCallback(async () => {
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void> | void;
+    };
+    const elem = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+    };
+
+    const currentlyNativeFullscreen = Boolean(
+      doc.fullscreenElement || doc.webkitFullscreenElement
+    );
+
+    try {
+      if (!currentlyNativeFullscreen && !isFullscreen) {
+        if (elem.requestFullscreen) {
+          await elem.requestFullscreen();
+        } else if (elem.webkitRequestFullscreen) {
+          await elem.webkitRequestFullscreen();
+        } else {
+          setIsFullscreen(true);
+        }
+      } else {
+        if (currentlyNativeFullscreen) {
+          if (doc.exitFullscreen) {
+            await doc.exitFullscreen();
+          } else if (doc.webkitExitFullscreen) {
+            await doc.webkitExitFullscreen();
+          }
+        }
+        setIsFullscreen(false);
+      }
+    } catch {
+      // Fallback if iframe or iOS Safari restricts native Fullscreen API
+      setIsFullscreen((prev) => !prev);
+    }
+
+    soundEngine.playColorPick(6);
+    window.setTimeout(() => {
+      const h = window.visualViewport?.height || window.innerHeight;
+      setViewportHeightPx(Math.round(h));
+      window.dispatchEvent(new Event("resize"));
+    }, 80);
+  }, [isFullscreen]);
 
   // Saved Custom Brushes Rack (Color + Width)
   const [savedBrushes, setSavedBrushes] = useState<SavedBrushPreset[]>(() => {
@@ -346,6 +414,9 @@ export default function App() {
         const nextCollapsed = !(isRightBrushPanelCollapsed && isBottomColorBarCollapsed);
         setIsRightBrushPanelCollapsed(nextCollapsed);
         setIsBottomColorBarCollapsed(nextCollapsed);
+      } else if (e.code === "KeyF") {
+        e.preventDefault();
+        handleToggleFullscreen();
       } else if (e.code === "KeyM") {
         e.preventDefault();
         handleToggleMute();
@@ -364,6 +435,7 @@ export default function App() {
   }, [
     gameState,
     handleStartGame,
+    handleToggleFullscreen,
     handleToggleMute,
     handleTriggerHint,
     isRightBrushPanelCollapsed,
@@ -818,6 +890,39 @@ export default function App() {
                 className="px-2 h-7 sm:h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-[11px] sm:text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0"
               >
                 <span>📖 Thơ</span>
+              </button>
+
+              {/* 9. Toàn Màn Hình (Fullscreen Mode Toggle - Phím F) */}
+              <button
+                onClick={handleToggleFullscreen}
+                title={
+                  isFullscreen
+                    ? "Thoát chế độ Toàn Màn Hình (Phím F)"
+                    : "Bật chế độ Toàn Màn Hình (Phím F)"
+                }
+                aria-label="Toàn màn hình"
+                className={`px-2 h-7 sm:h-8 rounded-lg font-bold text-[11px] sm:text-xs flex items-center gap-1 transition-all cursor-pointer shrink-0 ${
+                  isFullscreen
+                    ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950 ring-2 ring-emerald-200 shadow-xs"
+                    : "bg-sky-500/20 hover:bg-sky-500/35 text-sky-300 border border-sky-400/40"
+                }`}
+              >
+                {isFullscreen ? (
+                  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+                    <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+                    <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+                    <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+                  </svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M15 3h6v6" />
+                    <path d="M9 21H3v-6" />
+                    <path d="M21 3l-7 7" />
+                    <path d="M3 21l7-7" />
+                  </svg>
+                )}
+                <span>{isFullscreen ? "Thoát" : "Toàn Màn"}</span>
               </button>
             </div>
           </div>
