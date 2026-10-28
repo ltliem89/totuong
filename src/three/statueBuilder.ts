@@ -205,29 +205,14 @@ export function paintBrushStrokeOnCanvas(
       ctx.fill();
     }
 
-    // For medium/larger brush strokes (>= 7px), add subtle wet-paint bristle streaks & micro-pigment droplets
-    if (radiusPx >= 7) {
-      // Subtle glossy wet-paint highlight streak along the stroke
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
-      ctx.lineWidth = Math.max(1.2, effectiveRadius * 0.42);
+    // Subtle wet-paint sheen along larger strokes without messy edge dots
+    if (radiusPx >= 10) {
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+      ctx.lineWidth = Math.max(1.0, effectiveRadius * 0.35);
       ctx.beginPath();
-      ctx.moveTo(startX - effectiveRadius * 0.22, startY - effectiveRadius * 0.22);
-      ctx.lineTo(x - effectiveRadius * 0.22, y - effectiveRadius * 0.22);
+      ctx.moveTo(startX - effectiveRadius * 0.18, startY - effectiveRadius * 0.18);
+      ctx.lineTo(x - effectiveRadius * 0.18, y - effectiveRadius * 0.18);
       ctx.stroke();
-
-      // Tiny realistic paint micro-splatter droplets right around the wet brush edge
-      ctx.fillStyle = hexColor;
-      const speckCount = Math.min(5, Math.floor(radiusPx * 0.18));
-      for (let i = 0; i < speckCount; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const distFromEdge = effectiveRadius * (0.92 + Math.random() * 0.28);
-        const sx = x + Math.cos(angle) * distFromEdge;
-        const sy = y + Math.sin(angle) * distFromEdge;
-        const sr = Math.max(0.9, Math.min(2.6, effectiveRadius * 0.09));
-        ctx.beginPath();
-        ctx.arc(sx, sy, sr, 0, Math.PI * 2);
-        ctx.fill();
-      }
     }
 
     ctx.restore();

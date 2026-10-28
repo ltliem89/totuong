@@ -24,6 +24,7 @@ export interface StatueViewportHandle {
   resetStatueToWhite: () => void;
   autoPaintSample: () => void;
   rotateTurntableBy: (angleRad: number) => void;
+  zoomBy: (scaleFactor: number) => void;
   triggerCelebrationSpin: () => void;
 }
 
@@ -33,6 +34,7 @@ interface StatueViewportProps {
   selectedColorHex: string;
   selectedTool: BrushToolId;
   brushRadiusPx: number;
+  interactionMode: "paint" | "rotate";
   highlightedPartId: string | null;
   isTitleScreen: boolean;
   onPartPainted: (partId: string, colorHex: string) => void;
@@ -82,6 +84,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       selectedColorHex,
       selectedTool,
       brushRadiusPx,
+      interactionMode,
       highlightedPartId,
       isTitleScreen,
       onPartPainted,
@@ -99,6 +102,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       selectedColorHex,
       selectedTool,
       brushRadiusPx,
+      interactionMode,
       highlightedPartId,
       isTitleScreen,
       onPartPainted,
@@ -113,6 +117,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         selectedColorHex,
         selectedTool,
         brushRadiusPx,
+        interactionMode,
         highlightedPartId,
         isTitleScreen,
         onPartPainted,
@@ -125,6 +130,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       selectedColorHex,
       selectedTool,
       brushRadiusPx,
+      interactionMode,
       highlightedPartId,
       isTitleScreen,
       onPartPainted,
@@ -136,6 +142,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       resetStatue: () => void;
       paintSample: () => void;
       rotateBy: (angle: number) => void;
+      zoomBy: (scaleFactor: number) => void;
       celebrateSpin: () => void;
       rebuildAnimal: (id: AnimalId) => void;
       updateBrushAppearance: (hex: string, tool: BrushToolId, radiusPx: number) => void;
@@ -145,6 +152,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       resetStatueToWhite: () => sceneActionsRef.current?.resetStatue(),
       autoPaintSample: () => sceneActionsRef.current?.paintSample(),
       rotateTurntableBy: (angleRad: number) => sceneActionsRef.current?.rotateBy(angleRad),
+      zoomBy: (scaleFactor: number) => sceneActionsRef.current?.zoomBy(scaleFactor),
       triggerCelebrationSpin: () => sceneActionsRef.current?.celebrateSpin(),
     }));
 
@@ -206,29 +214,35 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
       pmremGenerator.dispose();
 
-      // 3. Camera & OrbitControls
+      // 3. Camera & OrbitControls (Optimized for Desktop, Tablet & Phone Portrait/Landscape)
+      const initAspect = container.clientWidth / Math.max(1, container.clientHeight);
       const camera = new THREE.PerspectiveCamera(
-        40,
-        container.clientWidth / container.clientHeight,
+        initAspect < 0.75 ? 48 : initAspect < 1.0 ? 44 : 40,
+        initAspect,
         0.1,
         100
       );
-      camera.position.set(0, 2.55, 6.9);
+      camera.position.set(0, 2.55, initAspect < 0.75 ? 7.8 : 6.9);
 
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.target.set(0, 1.38, 0);
       controls.enablePan = false;
       controls.enableDamping = !isSoftwareGl;
       controls.dampingFactor = 0.08;
-      controls.minDistance = 3.6;
-      controls.maxDistance = 10.5;
+      controls.minDistance = 3.2;
+      controls.maxDistance = 11.0;
       controls.minPolarAngle = 0.25;
       controls.maxPolarAngle = Math.PI / 2 - 0.03;
-      // Allow holding RIGHT mouse button (or LEFT mouse button on background) to rotate the 3D model
+      // Desktop: Left on background or Right anywhere rotates; Wheel zooms
       controls.mouseButtons = {
         LEFT: THREE.MOUSE.ROTATE,
         MIDDLE: THREE.MOUSE.DOLLY,
         RIGHT: THREE.MOUSE.ROTATE,
+      };
+      // Tablet & Mobile: 1 finger rotates (when in rotate mode or on background), 2 fingers pinch-zoom + rotate anywhere
+      controls.touches = {
+        ONE: THREE.TOUCH.ROTATE,
+        TWO: THREE.TOUCH.DOLLY_ROTATE,
       };
       controls.update();
 
@@ -363,17 +377,17 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
       brushCursorGroup.add(ringMesh, tipMesh, ferruleMesh, handleMesh);
       scene.add(brushCursorGroup);
 
-      // 7. Pooled "Bụi Màu" (Color Dust Cloud + Paint Droplets) & "Vệt Sơn" (Wet Paint Surface Trails)
+      // 7. Subtle 10% Micro-Dust & Wet Sheen Feedback (Lightweight & Realistic)
       const particles: ParticleItem[] = [];
-      const dropletGeo = new THREE.OctahedronGeometry(0.052, 0);
-      const dustGeo = new THREE.SphereGeometry(0.044, 8, 8);
+      const dropletGeo = new THREE.OctahedronGeometry(0.018, 0);
+      const dustGeo = new THREE.SphereGeometry(0.015, 6, 6);
 
-      for (let i = 0; i < 64; i++) {
-        const isDust = i < 40; // 40 soft floating color-dust motes + 24 lively paint droplets
+      for (let i = 0; i < 16; i++) {
+        const isDust = i < 10;
         const pMat = new THREE.MeshBasicMaterial({
           color: 0xffd93d,
           transparent: true,
-          opacity: isDust ? 0.82 : 0.95,
+          opacity: 0.28,
           depthWrite: false,
         });
         const pMesh = new THREE.Mesh(isDust ? dustGeo : dropletGeo, pMat);
@@ -384,45 +398,31 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           mat: pMat,
           velocity: new THREE.Vector3(),
           life: 0,
-          maxLife: isDust ? 0.65 : 0.5,
-          baseScale: isDust ? 1.15 : 0.95,
-          gravity: isDust ? 0.45 : 5.4,
+          maxLife: 0.24,
+          baseScale: 0.65,
+          gravity: isDust ? 0.35 : 3.2,
           isDust,
         });
       }
 
-      // Soft radial wet-paint splatter texture for 3D surface "Vệt Sơn" trails
       const trailCanvas = document.createElement("canvas");
-      trailCanvas.width = 128;
-      trailCanvas.height = 128;
+      trailCanvas.width = 64;
+      trailCanvas.height = 64;
       const tCtx = trailCanvas.getContext("2d")!;
-      const tGrad = tCtx.createRadialGradient(64, 64, 8, 64, 64, 60);
-      tGrad.addColorStop(0, "rgba(255, 255, 255, 0.95)");
-      tGrad.addColorStop(0.55, "rgba(255, 255, 255, 0.55)");
-      tGrad.addColorStop(0.85, "rgba(255, 255, 255, 0.18)");
+      const tGrad = tCtx.createRadialGradient(32, 32, 4, 32, 32, 28);
+      tGrad.addColorStop(0, "rgba(255, 255, 255, 0.45)");
+      tGrad.addColorStop(0.6, "rgba(255, 255, 255, 0.18)");
       tGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
       tCtx.fillStyle = tGrad;
-      tCtx.fillRect(0, 0, 128, 128);
-      // Add 4 tiny paint-splatter satellite dots around the wet dab
-      tCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
-      [
-        [24, 30, 5],
-        [102, 36, 4],
-        [28, 98, 4.5],
-        [98, 94, 5],
-      ].forEach(([cx, cy, r]) => {
-        tCtx.beginPath();
-        tCtx.arc(cx, cy, r, 0, Math.PI * 2);
-        tCtx.fill();
-      });
+      tCtx.fillRect(0, 0, 64, 64);
       const trailTex = new THREE.CanvasTexture(trailCanvas);
 
       const paintTrails: PaintTrailItem[] = [];
-      const trailGeo = new THREE.PlaneGeometry(0.22, 0.22);
+      const trailGeo = new THREE.PlaneGeometry(0.14, 0.14);
       trailGeo.rotateX(-Math.PI / 2);
-      trailGeo.translate(0, 0.005, 0);
+      trailGeo.translate(0, 0.003, 0);
 
-      for (let i = 0; i < 24; i++) {
+      for (let i = 0; i < 8; i++) {
         const tMat = new THREE.MeshBasicMaterial({
           map: trailTex,
           color: 0xffd93d,
@@ -438,7 +438,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           mesh: tMesh,
           mat: tMat,
           life: 0,
-          maxLife: 0.42,
+          maxLife: 0.2,
           startScale: 1,
         });
       }
@@ -450,48 +450,49 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         radiusPx: number,
         isBurst: boolean
       ) => {
-        const sizeFactor = THREE.MathUtils.clamp(0.45 + (radiusPx / 26) * 0.85, 0.4, 1.9);
-        const maxToSpawn = isBurst ? 14 : 4;
+        // 10% subtle emission: while dragging, only emit occasionally (12% chance) and 1 tiny speck
+        if (!isBurst && Math.random() > 0.12) return;
+
+        const sizeFactor = THREE.MathUtils.clamp(0.4 + (radiusPx / 45) * 0.5, 0.35, 1.0);
+        const maxToSpawn = isBurst ? 2 : 1;
         let spawned = 0;
 
         for (const p of particles) {
           if (p.life <= 0 && spawned < maxToSpawn) {
-            p.maxLife = p.isDust
-              ? 0.38 + Math.random() * 0.32
-              : 0.32 + Math.random() * 0.25;
+            p.maxLife = 0.18 + Math.random() * 0.1;
             p.life = p.maxLife;
-            p.baseScale = (p.isDust ? 0.75 + Math.random() * 0.7 : 0.65 + Math.random() * 0.5) * sizeFactor;
+            p.baseScale = (0.55 + Math.random() * 0.35) * sizeFactor;
             p.mesh.visible = true;
-            p.mesh.position.copy(worldPos).addScaledVector(normal, 0.02);
+            p.mesh.position.copy(worldPos).addScaledVector(normal, 0.012);
             p.mesh.scale.setScalar(p.baseScale);
             p.mat.color.set(hexColor);
-            p.mat.opacity = p.isDust ? 0.82 : 0.95;
+            p.mat.opacity = 0.26;
 
-            const speed = isBurst ? 1.8 + Math.random() * 1.8 : 0.65 + Math.random() * 1.1;
+            const speed = isBurst ? 0.55 + Math.random() * 0.45 : 0.25 + Math.random() * 0.3;
             p.velocity.set(
-              normal.x * speed * 0.65 + (Math.random() - 0.5) * speed * 1.35,
-              normal.y * speed * 0.65 + (p.isDust ? 0.35 + Math.random() * 0.9 : 0.8 + Math.random() * 1.4),
-              normal.z * speed * 0.65 + (Math.random() - 0.5) * speed * 1.35
+              normal.x * speed * 0.5 + (Math.random() - 0.5) * speed * 0.7,
+              normal.y * speed * 0.5 + 0.18 + Math.random() * 0.35,
+              normal.z * speed * 0.5 + (Math.random() - 0.5) * speed * 0.7
             );
             spawned++;
           }
         }
 
-        // Spawn a glossy 3D wet-paint surface trail ("vệt sơn") oriented along the statue surface normal
-        for (const tr of paintTrails) {
-          if (tr.life <= 0) {
-            tr.maxLife = isBurst ? 0.48 : 0.36;
-            tr.life = tr.maxLife;
-            tr.startScale = THREE.MathUtils.clamp(0.35 + (radiusPx / 22) * 1.05, 0.32, 2.2);
-            tr.mat.color.set(hexColor);
-            tr.mat.opacity = 0.72;
-            tr.mesh.position.copy(worldPos);
-            _trailQuat.setFromUnitVectors(_upVec, normal);
-            tr.mesh.quaternion.copy(_trailQuat);
-            tr.mesh.rotateY(Math.random() * Math.PI * 2);
-            tr.mesh.scale.setScalar(tr.startScale);
-            tr.mesh.visible = true;
-            break;
+        if (isBurst || Math.random() < 0.25) {
+          for (const tr of paintTrails) {
+            if (tr.life <= 0) {
+              tr.maxLife = 0.18;
+              tr.life = tr.maxLife;
+              tr.startScale = THREE.MathUtils.clamp(0.28 + (radiusPx / 32) * 0.65, 0.25, 1.15);
+              tr.mat.color.set(hexColor);
+              tr.mat.opacity = 0.16;
+              tr.mesh.position.copy(worldPos);
+              _trailQuat.setFromUnitVectors(_upVec, normal);
+              tr.mesh.quaternion.copy(_trailQuat);
+              tr.mesh.scale.setScalar(tr.startScale);
+              tr.mesh.visible = true;
+              break;
+            }
           }
         }
       };
@@ -623,15 +624,24 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         }
       };
 
+      const activePointers = new Set<number>();
+
       const onContextMenu = (e: MouseEvent) => {
         e.preventDefault();
       };
 
       const onPointerDown = (e: PointerEvent) => {
+        activePointers.add(e.pointerId);
+
         if (stateRef.current.isTitleScreen || !currentStatue) return;
 
-        // Right mouse button (e.button === 2) or middle mouse button -> always rotate/zoom 3D model smoothly!
-        if (e.button === 2 || e.button === 1) {
+        // Multi-touch (2+ fingers on tablet/phone), Right-click, Middle-click, or Rotate Mode -> always rotate/zoom 3D model!
+        if (
+          activePointers.size >= 2 ||
+          e.button === 2 ||
+          e.button === 1 ||
+          stateRef.current.interactionMode === "rotate"
+        ) {
           isPaintingStroke = false;
           hasLastUv = false;
           controls.enabled = true;
@@ -647,13 +657,13 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         const intersects = raycaster.intersectObjects(meshes, false);
 
         if (intersects.length > 0) {
-          // Left-clicked directly on the 3D animal statue -> Disable orbit rotation and paint!
+          // 1-finger touch or Left-click directly on the 3D animal statue in Paint Mode -> Disable orbit rotation and paint!
           controls.enabled = false;
           isPaintingStroke = true;
           hasLastUv = false;
           performPaintAtHit(intersects[0], true);
         } else {
-          // Left-clicked on background or turntable -> allow OrbitControls to rotate camera smoothly!
+          // 1-finger touch or Left-click on background -> allow OrbitControls to rotate camera smoothly!
           controls.enabled = true;
           isPaintingStroke = false;
         }
@@ -665,8 +675,13 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           return;
         }
 
-        // If holding right mouse button to rotate, keep brush cursor hidden for an unobstructed view
-        if ((e.buttons & 2) !== 0) {
+        // If 2+ fingers are touching (pinch-zoom/rotate), holding right mouse button, or in Rotate Mode without painting
+        if (
+          activePointers.size >= 2 ||
+          (e.buttons & 2) !== 0 ||
+          stateRef.current.interactionMode === "rotate"
+        ) {
+          isPaintingStroke = false;
           brushCursorGroup.visible = false;
           return;
         }
@@ -716,18 +731,28 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         }
       };
 
-      const stopPaintingStroke = () => {
+      const stopPaintingStroke = (e?: PointerEvent) => {
+        if (e) {
+          activePointers.delete(e.pointerId);
+          if (e.pointerType === "touch" && activePointers.size === 0) {
+            brushCursorGroup.visible = false;
+          }
+        } else {
+          activePointers.clear();
+        }
         isPaintingStroke = false;
         hasLastUv = false;
         controls.enabled = true;
       };
 
       const domElem = renderer.domElement;
+      domElem.style.touchAction = "none";
       domElem.addEventListener("contextmenu", onContextMenu);
       domElem.addEventListener("pointerdown", onPointerDown, { capture: true });
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", stopPaintingStroke);
-      window.addEventListener("blur", stopPaintingStroke);
+      window.addEventListener("pointercancel", stopPaintingStroke);
+      window.addEventListener("blur", () => stopPaintingStroke());
 
       // Expose imperative actions to parent React UI
       sceneActionsRef.current = {
@@ -756,6 +781,18 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         rotateBy: (angle: number) => {
           targetTurntableRotY += angle;
         },
+        zoomBy: (scaleFactor: number) => {
+          const offset = camera.position.clone().sub(controls.target);
+          const currentDist = offset.length();
+          const nextDist = THREE.MathUtils.clamp(
+            currentDist * scaleFactor,
+            controls.minDistance,
+            controls.maxDistance
+          );
+          offset.normalize().multiplyScalar(nextDist);
+          camera.position.copy(controls.target).add(offset);
+          controls.update();
+        },
         celebrateSpin: () => {
           targetTurntableRotY += Math.PI * 2;
           bounceScale = 1.14;
@@ -778,12 +815,14 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         },
       };
 
-      // 10. Handle Window Resize
+      // 10. Handle Window Resize (Responsive FOV for Portrait Phone vs Tablet/Desktop)
       const onResize = () => {
         if (!container) return;
         const w = container.clientWidth;
-        const h = container.clientHeight;
-        camera.aspect = w / Math.max(1, h);
+        const h = Math.max(1, container.clientHeight);
+        const aspect = w / h;
+        camera.aspect = aspect;
+        camera.fov = aspect < 0.75 ? 48 : aspect < 1.0 ? 44 : 40;
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
       };
@@ -892,15 +931,14 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
           }
         }
 
-        // Tactile 3D brush bristle press & flex animation when actively painting
+        // Subtle 3D brush tip press when actively painting
         if (brushCursorGroup.visible) {
-          const pressOffset = isPaintingStroke ? -0.028 + Math.sin(elapsed * 28) * 0.008 : 0;
+          const pressOffset = isPaintingStroke ? -0.015 : 0;
           tipMesh.position.y = pressOffset;
-          const ringPulse = isPaintingStroke ? 1.18 + Math.sin(elapsed * 22) * 0.12 : 1.0;
-          ringMesh.scale.y = ringPulse;
+          ringMesh.scale.y = 1.0;
         }
 
-        // Advance pooled "Bụi Màu" (Color Dust & Paint Droplet) particles
+        // Advance subtle 10% micro-dust particles
         for (const p of particles) {
           if (p.life > 0) {
             p.life -= dt;
@@ -910,23 +948,19 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
               const lifeRatio = Math.max(0.01, p.life / p.maxLife);
               p.velocity.y -= p.gravity * dt;
               if (p.isDust) {
-                // Soft swirling air-drag for floating color dust
-                p.velocity.multiplyScalar(Math.exp(-3.2 * dt));
-                const dustScale = p.baseScale * (0.65 + (1 - lifeRatio) * 0.75);
-                p.mesh.scale.setScalar(dustScale);
-                p.mat.opacity = lifeRatio * 0.82;
-              } else {
-                p.mesh.rotation.x += 5 * dt;
-                p.mesh.rotation.y += 6 * dt;
+                p.velocity.multiplyScalar(Math.exp(-4.0 * dt));
                 p.mesh.scale.setScalar(p.baseScale * lifeRatio);
-                p.mat.opacity = lifeRatio;
+                p.mat.opacity = lifeRatio * 0.25;
+              } else {
+                p.mesh.scale.setScalar(p.baseScale * lifeRatio);
+                p.mat.opacity = lifeRatio * 0.32;
               }
               p.mesh.position.addScaledVector(p.velocity, dt);
             }
           }
         }
 
-        // Advance pooled "Vệt Sơn" (Wet Paint Surface Trails)
+        // Advance subtle wet-paint trails
         for (const tr of paintTrails) {
           if (tr.life > 0) {
             tr.life -= dt;
@@ -934,9 +968,9 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
               tr.mesh.visible = false;
             } else {
               const progress = 1 - tr.life / tr.maxLife;
-              const spreadScale = tr.startScale * (1.0 + progress * 0.42);
+              const spreadScale = tr.startScale * (1.0 + progress * 0.15);
               tr.mesh.scale.setScalar(spreadScale);
-              tr.mat.opacity = (1 - progress) * 0.72;
+              tr.mat.opacity = (1 - progress) * 0.16;
             }
           }
         }
@@ -960,7 +994,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
         domElem.removeEventListener("pointerdown", onPointerDown, { capture: true });
         window.removeEventListener("pointermove", onPointerMove);
         window.removeEventListener("pointerup", stopPaintingStroke);
-        window.removeEventListener("blur", stopPaintingStroke);
+        window.removeEventListener("pointercancel", stopPaintingStroke);
         window.removeEventListener("resize", onResize);
         controls.dispose();
         if (currentStatue) currentStatue.dispose();
@@ -991,7 +1025,7 @@ export const StatueViewport = forwardRef<StatueViewportHandle, StatueViewportPro
     return (
       <div
         ref={mountRef}
-        className="absolute inset-0 w-full h-full cursor-crosshair"
+        className="absolute inset-0 w-full h-full touch-none cursor-crosshair"
         aria-label="Không gian tô tượng 3D"
       />
     );

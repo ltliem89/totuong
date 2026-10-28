@@ -51,6 +51,7 @@ export default function App() {
   const [selectedColor, setSelectedColor] = useState<PaletteColor>(PALETTE_COLORS[0]);
   const [selectedTool, setSelectedTool] = useState<BrushToolId>("smooth");
   const [brushRadiusPx, setBrushRadiusPx] = useState<number>(DEFAULT_BRUSH_RADIUS_PX);
+  const [interactionMode, setInteractionMode] = useState<"paint" | "rotate">("paint");
 
   // Collapsible states for the unified panels
   const [isRightBrushPanelCollapsed, setIsRightBrushPanelCollapsed] = useState<boolean>(false);
@@ -168,10 +169,11 @@ export default function App() {
     setSelectedColor(foundColor);
     setBrushRadiusPx(preset.radiusPx);
     setSelectedTool(preset.toolId);
+    setInteractionMode("paint");
     soundEngine.playColorPick(Math.min(11, Math.floor(preset.radiusPx / 4)));
   }, []);
 
-  // Delete a saved brush on right-click
+  // Delete a saved brush on right-click or touch delete button
   const handleDeleteSavedBrush = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     e.preventDefault();
@@ -187,6 +189,7 @@ export default function App() {
     if (selectedTool === "eraser" || selectedTool === "erase_part") {
       setSelectedTool("smooth");
     }
+    setInteractionMode("paint");
     saveBrushToRack(selectedColor, DEFAULT_BRUSH_RADIUS_PX, "smooth");
   }, [saveBrushToRack, selectedColor, selectedTool]);
 
@@ -247,6 +250,7 @@ export default function App() {
     if (selectedTool === "eraser" || selectedTool === "erase_part") {
       setSelectedTool("smooth");
     }
+    setInteractionMode("paint");
 
     const instantTip: TeacherCoachTip = {
       encouragement: `Gợi ý: Tô ${targetPart.suggestedColorNameVi} cho ${targetPart.nameVi}!`,
@@ -399,6 +403,7 @@ export default function App() {
     if (selectedTool === "eraser" || selectedTool === "erase_part") {
       setSelectedTool("smooth");
     }
+    setInteractionMode("paint");
 
     soundEngine.playColorPick(index);
     soundEngine.speakVi(color.nameVi, color.nameEn);
@@ -408,6 +413,7 @@ export default function App() {
   // Select Brush Tool from Right Unified Brush Panel
   const handlePickTool = (toolId: BrushToolId) => {
     setSelectedTool(toolId);
+    setInteractionMode("paint");
     soundEngine.playColorPick(5);
   };
 
@@ -472,8 +478,8 @@ export default function App() {
   };
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#0F172A] text-slate-100 select-none">
-      {/* 1. Full-Bleed 3D WebGL Viewport (100vw x 100vh) */}
+    <div className="fixed inset-0 w-full h-full overflow-hidden bg-[#0F172A] text-slate-100 select-none">
+      {/* 1. Full-Bleed 3D WebGL Viewport */}
       <StatueViewport
         ref={viewportRef}
         animalId={selectedAnimalId}
@@ -481,6 +487,7 @@ export default function App() {
         selectedColorHex={selectedColor.hex}
         selectedTool={selectedTool}
         brushRadiusPx={brushRadiusPx}
+        interactionMode={interactionMode}
         highlightedPartId={highlightedPartId}
         isTitleScreen={gameState === "title"}
         onPartPainted={handlePartPainted}
@@ -490,8 +497,8 @@ export default function App() {
 
       {/* 2. TITLE SCREEN OVERLAY */}
       {gameState === "title" && (
-        <div className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-6 md:p-10">
-          <div className="flex items-center justify-between gap-4 pointer-events-auto flex-wrap">
+        <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-4 sm:p-6 md:p-10 pb-[max(1rem,env(safe-area-inset-bottom,1rem))]">
+          <div className="flex items-center justify-between gap-3 pointer-events-auto flex-wrap">
             <div className="bg-[#151E2E]/95 border border-slate-700/80 rounded-xl px-3.5 py-2 shadow-md flex items-center gap-2.5">
               <svg
                 className="w-5 h-5 text-amber-400 shrink-0"
@@ -532,7 +539,7 @@ export default function App() {
             </button>
           </div>
 
-          <div className="max-w-lg bg-[#151E2E]/95 border border-slate-700/80 rounded-2xl p-5 md:p-6 shadow-xl pointer-events-auto">
+          <div className="max-w-lg bg-[#151E2E]/95 border border-slate-700/80 rounded-2xl p-4 sm:p-5 md:p-6 shadow-xl pointer-events-auto">
             <svg
               viewBox="0 0 500 90"
               className="w-full h-auto mb-2"
@@ -588,17 +595,17 @@ export default function App() {
             </div>
 
             <div className="mt-3 pt-2.5 border-t border-slate-700/80 text-xs font-medium text-slate-400">
-              Chuột Trái: Tô màu · Giữ Chuột Phải: Xoay 3D · Phím H: Ẩn/Hiện công cụ
+              Chạm / Chuột Trái: Tô màu · 2 Ngón Tay / Chuột Phải: Xoay & Phóng To 3D
             </div>
           </div>
         </div>
       )}
 
-      {/* 3. STREAMLINED PLAYING WORKSPACE */}
+      {/* 3. STREAMLINED PLAYING WORKSPACE (Fixed Flex-Col so Bottom Bar is NEVER clipped on Tablet/Mobile) */}
       {gameState !== "title" && (
-        <div className="absolute inset-0 z-10 pointer-events-none">
+        <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-2 sm:p-2.5 pb-[max(0.5rem,env(safe-area-inset-bottom,0.5rem))] overflow-hidden">
           {/* A. TOP BAR: Left Animal Dropdown Icon + Right Pure Icon Controls */}
-          <div className="absolute top-2.5 left-2.5 right-2.5 flex items-start justify-between gap-2 pointer-events-none">
+          <div className="shrink-0 flex items-start justify-between gap-2 pointer-events-none relative z-20">
             {/* TOP-LEFT: Single Animal Icon Button that opens Dropdown List */}
             <div className="relative pointer-events-auto">
               <button
@@ -607,7 +614,7 @@ export default function App() {
                   setIsHelperMenuOpen(false);
                 }}
                 title="Chọn tượng con vật"
-                className="flex items-center gap-2 bg-[#151E2E]/95 hover:bg-slate-800 border border-slate-700/80 rounded-xl px-3 py-1.5 shadow-lg cursor-pointer transition-colors"
+                className="flex items-center gap-1.5 sm:gap-2 bg-[#151E2E]/95 hover:bg-slate-800 border border-slate-700/80 rounded-xl px-2.5 sm:px-3 py-1.5 shadow-lg cursor-pointer transition-colors"
               >
                 <span className="text-lg leading-none" aria-hidden="true">
                   {ANIMAL_ICONS[selectedAnimalId]}
@@ -659,7 +666,7 @@ export default function App() {
             </div>
 
             {/* TOP-RIGHT: Pure Icon Audio Controls + Integrated Helper Menu */}
-            <div className="pointer-events-auto flex items-center gap-1.5 bg-[#151E2E]/95 border border-slate-700/80 rounded-xl p-1 shadow-lg">
+            <div className="pointer-events-auto flex items-center gap-1 sm:gap-1.5 bg-[#151E2E]/95 border border-slate-700/80 rounded-xl p-1 shadow-lg">
               {/* 1. Sound Mute / Unmute Icon Only (Red Speaker when Muted, Green Speaker when Unmuted) */}
               <button
                 onClick={handleToggleMute}
@@ -735,7 +742,7 @@ export default function App() {
               <button
                 onClick={handleTriggerHint}
                 title="Cô giáo gợi ý màu tô & đọc từ"
-                className="px-2.5 h-8 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                className="px-2 sm:px-2.5 h-8 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0"
               >
                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
                   <path d="M9 18h6" />
@@ -753,7 +760,7 @@ export default function App() {
                     setIsAnimalMenuOpen(false);
                   }}
                   title="Tùy chọn: Xem Mẫu, Làm Mới Tượng, Đổi Nền, Tạm Dừng"
-                  className={`px-2.5 h-8 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0 ${
+                  className={`px-2 sm:px-2.5 h-8 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0 ${
                     isHelperMenuOpen
                       ? "bg-indigo-500 text-white"
                       : "bg-slate-800 hover:bg-slate-700 text-slate-200"
@@ -763,7 +770,7 @@ export default function App() {
                     <circle cx="12" cy="12" r="3" />
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                   </svg>
-                  <span>Tùy Chọn</span>
+                  <span className="hidden xs:inline sm:inline">Tùy Chọn</span>
                 </button>
 
                 {isHelperMenuOpen && (
@@ -820,7 +827,7 @@ export default function App() {
 
           {/* COMPACT HINT POPOVER (Only visible when user clicks Gợi Ý) */}
           {coachTip && (
-            <div className="pointer-events-auto absolute top-14 right-3 z-20 max-w-xs bg-[#151E2E]/95 border border-amber-400/50 rounded-xl p-3 shadow-xl">
+            <div className="pointer-events-auto absolute top-14 right-3 z-30 max-w-xs bg-[#151E2E]/95 border border-amber-400/50 rounded-xl p-3 shadow-xl">
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-xs font-bold text-amber-300">
                   {isLoadingCoach ? "Đang tạo gợi ý..." : coachTip.encouragement}
@@ -844,157 +851,202 @@ export default function App() {
             </div>
           )}
 
-          {/* B. UNIFIED RIGHT PANEL: KIỂU BÚT / TẨY XÓA + BÚT ĐÃ LƯU NẰM CHUNG MỘT BẢNG */}
-          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
-            <button
-              onClick={() => setIsRightBrushPanelCollapsed((prev) => !prev)}
-              title={isRightBrushPanelCollapsed ? "Mở bảng bút & kiểu bút (H)" : "Thu gọn bảng bút (H)"}
-              className="pointer-events-auto w-5 h-12 rounded-l-xl bg-[#151E2E]/95 border border-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center shadow-md cursor-pointer text-xs font-bold"
-            >
-              {isRightBrushPanelCollapsed ? "◂" : "▸"}
-            </button>
+          {/* B. MIDDLE WORKSPACE ROW: Holds the Unified Right Panel strictly between Top Bar and Bottom Bar so it NEVER overlaps or clips the Bottom Color Bar on Tablet! */}
+          <div className="flex-1 min-h-0 relative flex items-center justify-end py-1.5 pointer-events-none">
+            <div className="flex items-center gap-1 max-h-full pointer-events-none">
+              <button
+                onClick={() => setIsRightBrushPanelCollapsed((prev) => !prev)}
+                title={isRightBrushPanelCollapsed ? "Mở bảng bút & kiểu bút (H)" : "Thu gọn bảng bút (H)"}
+                className="pointer-events-auto w-5 h-12 rounded-l-xl bg-[#151E2E]/95 border border-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center shadow-md cursor-pointer text-xs font-bold shrink-0"
+              >
+                {isRightBrushPanelCollapsed ? "◂" : "▸"}
+              </button>
 
-            {!isRightBrushPanelCollapsed && (
-              <div className="pointer-events-auto bg-[#151E2E]/95 border border-slate-700/80 rounded-2xl p-2 shadow-2xl flex flex-col gap-2 max-h-[76vh] overflow-y-auto w-[92px]">
-                {/* SECTION 1: KIỂU BÚT & TẨY XÓA (Nét Cao, Tô Vùng, Sáp, Xịt, Sao, Tẩy, Xóa) */}
-                <div className="flex flex-col gap-1 pb-2 border-b border-slate-700/80">
-                  <span className="text-[9px] font-mono font-bold text-sky-300 uppercase text-center tracking-tight">
-                    Kiểu Bút
-                  </span>
-                  {BRUSH_TOOLS.map((tool) => {
-                    const isActive = selectedTool === tool.id;
-                    const isEraser = Boolean(tool.isEraser);
-                    return (
-                      <button
-                        key={tool.id}
-                        onClick={() => handlePickTool(tool.id)}
-                        title={tool.descVi}
-                        className={`w-full px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                          isActive
-                            ? isEraser
-                              ? "bg-rose-500 text-white ring-2 ring-white shadow-sm"
-                              : "bg-slate-900 text-white ring-2 ring-white shadow-sm"
-                            : isEraser
-                              ? "bg-rose-500/15 text-rose-200 border border-rose-400/30 hover:bg-rose-500/25"
-                              : "bg-slate-800/90 text-slate-300 hover:bg-slate-700 hover:text-white"
-                        }`}
-                        style={
-                          isActive && !isEraser
-                            ? {
-                                background: `linear-gradient(135deg, ${selectedColor.hex}55 0%, #0f172a 95%)`,
-                              }
-                            : undefined
-                        }
-                      >
-                        <span
-                          className="w-2.5 h-2.5 rounded-sm border border-white/80 shrink-0"
-                          style={{
-                            backgroundColor: isEraser ? "#F43F5E" : selectedColor.hex,
-                          }}
-                        />
-                        <span className="truncate">{TOOL_COMPACT_LABELS[tool.id]}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* SECTION 2: BÚT ĐÃ LƯU (Nằm chung bảng, hiển thị rõ Màu + Độ rộng px) */}
-                <div
-                  className="flex flex-col items-center gap-1.5"
-                  title="Các bút đã lưu (Chuột trái để chọn, chuột phải để xóa)"
-                >
-                  <span className="text-[9px] font-mono font-bold text-amber-300 uppercase text-center tracking-tight">
-                    Bút Lưu
-                  </span>
-                  {savedBrushes.map((preset) => {
-                    const isCurrent =
-                      selectedColor.id === preset.colorId &&
-                      brushRadiusPx === preset.radiusPx &&
-                      selectedTool === preset.toolId &&
-                      selectedTool !== "eraser" &&
-                      selectedTool !== "erase_part";
-                    const isPop = justSavedBrushId === preset.id;
-                    const strokeBarHeight = Math.max(
-                      3,
-                      Math.min(15, Math.round(preset.radiusPx * 0.32))
-                    );
-
-                    return (
-                      <button
-                        key={preset.id}
-                        onClick={() => handleSelectSavedBrush(preset)}
-                        onContextMenu={(e) => handleDeleteSavedBrush(e, preset.id)}
-                        title={`Cỡ ${preset.radiusPx}px (Chuột phải để xóa)`}
-                        className={`relative w-full h-8 rounded-xl flex items-center justify-between px-2 transition-all cursor-pointer shrink-0 ${
-                          isCurrent
-                            ? "ring-2 ring-white shadow-md -translate-x-0.5 scale-105 z-10"
-                            : "hover:scale-103 border border-white/25 opacity-95 hover:opacity-100"
-                        } ${isPop ? "ring-2 ring-amber-300 scale-110" : ""}`}
-                        style={{
-                          background: `linear-gradient(135deg, ${preset.colorHex} 0%, ${preset.colorHex}dd 65%, #0f172a 100%)`,
-                        }}
-                      >
-                        <div className="flex items-center gap-1">
-                          <svg
-                            className="w-3.5 h-3.5 shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.7)]"
-                            viewBox="0 0 24 24"
-                            fill={preset.colorHex}
-                            stroke="#FFFFFF"
-                            strokeWidth="2.2"
-                          >
-                            <path d="M12 19l7-7 3 3-7 7-3-3z" />
-                            <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-                          </svg>
+              {!isRightBrushPanelCollapsed && (
+                <div className="pointer-events-auto bg-[#151E2E]/95 border border-slate-700/80 rounded-2xl p-1.5 sm:p-2 shadow-2xl flex flex-col gap-2 max-h-full overflow-y-auto w-[88px] sm:w-[94px]">
+                  {/* SECTION 1: KIỂU BÚT & TẨY XÓA (Nét Cao, Tô Vùng, Sáp, Xịt, Sao, Tẩy, Xóa) */}
+                  <div className="flex flex-col gap-1 pb-1.5 border-b border-slate-700/80">
+                    <span className="text-[9px] font-mono font-bold text-sky-300 uppercase text-center tracking-tight">
+                      Kiểu Bút
+                    </span>
+                    {BRUSH_TOOLS.map((tool) => {
+                      const isActive = selectedTool === tool.id;
+                      const isEraser = Boolean(tool.isEraser);
+                      return (
+                        <button
+                          key={tool.id}
+                          onClick={() => handlePickTool(tool.id)}
+                          title={tool.descVi}
+                          className={`w-full px-1.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            isActive
+                              ? isEraser
+                                ? "bg-rose-500 text-white ring-2 ring-white shadow-sm"
+                                : "bg-slate-900 text-white ring-2 ring-white shadow-sm"
+                              : isEraser
+                                ? "bg-rose-500/15 text-rose-200 border border-rose-400/30 hover:bg-rose-500/25"
+                                : "bg-slate-800/90 text-slate-300 hover:bg-slate-700 hover:text-white"
+                          }`}
+                          style={
+                            isActive && !isEraser
+                              ? {
+                                  background: `linear-gradient(135deg, ${selectedColor.hex}55 0%, #0f172a 95%)`,
+                                }
+                              : undefined
+                          }
+                        >
                           <span
-                            className="w-3 rounded-full border border-white shadow-xs shrink-0"
+                            className="w-2.5 h-2.5 rounded-sm border border-white/80 shrink-0"
                             style={{
-                              height: `${strokeBarHeight}px`,
-                              backgroundColor: preset.colorHex,
+                              backgroundColor: isEraser ? "#F43F5E" : selectedColor.hex,
                             }}
                           />
-                        </div>
+                          <span className="truncate">{TOOL_COMPACT_LABELS[tool.id]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
 
-                        <span className="px-1 py-0.5 rounded bg-slate-950/90 border border-white/30 text-[10px] font-mono font-extrabold text-white leading-none tabular-nums">
-                          {preset.radiusPx}
-                        </span>
-                      </button>
-                    );
-                  })}
+                  {/* SECTION 2: BÚT ĐÃ LƯU (Nằm chung bảng, hiển thị rõ Màu + Độ rộng px) */}
+                  <div
+                    className="flex flex-col items-center gap-1.5"
+                    title="Các bút đã lưu (Chạm/Chuột trái để chọn, Chuột phải hoặc bấm × để xóa)"
+                  >
+                    <span className="text-[9px] font-mono font-bold text-amber-300 uppercase text-center tracking-tight">
+                      Bút Lưu
+                    </span>
+                    {savedBrushes.map((preset) => {
+                      const isCurrent =
+                        selectedColor.id === preset.colorId &&
+                        brushRadiusPx === preset.radiusPx &&
+                        selectedTool === preset.toolId &&
+                        selectedTool !== "eraser" &&
+                        selectedTool !== "erase_part";
+                      const isPop = justSavedBrushId === preset.id;
+                      const strokeBarHeight = Math.max(
+                        3,
+                        Math.min(15, Math.round(preset.radiusPx * 0.32))
+                      );
+
+                      return (
+                        <div key={preset.id} className="relative w-full shrink-0">
+                          <button
+                            onClick={() => handleSelectSavedBrush(preset)}
+                            onContextMenu={(e) => handleDeleteSavedBrush(e, preset.id)}
+                            title={`Cỡ ${preset.radiusPx}px (Chuột phải để xóa)`}
+                            className={`relative w-full h-8 rounded-xl flex items-center justify-between px-2 transition-all cursor-pointer ${
+                              isCurrent
+                                ? "ring-2 ring-white shadow-md -translate-x-0.5 scale-105 z-10"
+                                : "hover:scale-103 border border-white/25 opacity-95 hover:opacity-100"
+                            } ${isPop ? "ring-2 ring-amber-300 scale-110" : ""}`}
+                            style={{
+                              background: `linear-gradient(135deg, ${preset.colorHex} 0%, ${preset.colorHex}dd 65%, #0f172a 100%)`,
+                            }}
+                          >
+                            <div className="flex items-center gap-1">
+                              <svg
+                                className="w-3.5 h-3.5 shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.7)]"
+                                viewBox="0 0 24 24"
+                                fill={preset.colorHex}
+                                stroke="#FFFFFF"
+                                strokeWidth="2.2"
+                              >
+                                <path d="M12 19l7-7 3 3-7 7-3-3z" />
+                                <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+                              </svg>
+                              <span
+                                className="w-3 rounded-full border border-white shadow-xs shrink-0"
+                                style={{
+                                  height: `${strokeBarHeight}px`,
+                                  backgroundColor: preset.colorHex,
+                                }}
+                              />
+                            </div>
+
+                            <span className="px-1 py-0.5 rounded bg-slate-950/90 border border-white/30 text-[10px] font-mono font-extrabold text-white leading-none tabular-nums">
+                              {preset.radiusPx}
+                            </span>
+                          </button>
+
+                          {isCurrent && savedBrushes.length > 1 && (
+                            <button
+                              onClick={(e) => handleDeleteSavedBrush(e, preset.id)}
+                              title="Xóa bút lưu này"
+                              className="absolute -top-1.5 -left-1.5 z-20 w-4 h-4 rounded-full bg-rose-600 hover:bg-rose-500 text-white border border-white text-[10px] font-bold leading-none flex items-center justify-center shadow-md cursor-pointer"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
-          {/* C. UNIFIED SINGLE-ROW BOTTOM BAR: BẢNG MÀU + CHỖ CHỈNH PX & LƯU BÚT NẰM CÙNG MỘT HÀNG */}
-          <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-none max-w-[98vw]">
-            {/* Mini Collapse / Rotate Handle */}
-            <div className="pointer-events-auto flex items-center gap-1.5 mb-1">
+          {/* C. UNIFIED BOTTOM BAR (Shrink-0 inside Fixed Flex-Col so it is ALWAYS 100% visible on Tablet, Phone & Desktop!) */}
+          <div className="shrink-0 flex flex-col items-center w-full pointer-events-none z-20">
+            {/* Mini Touch / Desktop Control Strip: Chế độ Vẽ/Xoay + Xoay Trái/Phải + Phóng To/Thu Nhỏ + Ẩn/Hiện */}
+            <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-1 sm:gap-1.5 mb-1">
+              <button
+                onClick={() =>
+                  setInteractionMode((prev) => (prev === "paint" ? "rotate" : "paint"))
+                }
+                title="Chuyển chế độ 1 ngón tay / chuột trái: Vẽ Màu hoặc Xoay Tượng 3D (2 ngón tay luôn xoay & phóng to được)"
+                className={`px-2.5 py-0.5 rounded-full border text-[11px] font-bold cursor-pointer transition-colors flex items-center gap-1 ${
+                  interactionMode === "rotate"
+                    ? "bg-amber-400 border-amber-200 text-slate-950 shadow-sm"
+                    : "bg-[#151E2E]/95 border-slate-700/80 text-emerald-300 hover:text-white"
+                }`}
+              >
+                <span>{interactionMode === "paint" ? "🖌️ Chế Độ Vẽ" : "🔄 Đang Xoay 3D"}</span>
+              </button>
+
               <button
                 onClick={() => viewportRef.current?.rotateTurntableBy(-Math.PI / 4)}
-                title="Xoay trái"
-                className="px-2 py-0.5 rounded-full bg-[#151E2E]/95 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-bold cursor-pointer"
+                title="Xoay tượng sang trái"
+                className="px-2 py-0.5 rounded-full bg-[#151E2E]/95 border border-slate-700/80 text-slate-200 hover:text-white text-xs font-bold cursor-pointer"
               >
                 ⟲
               </button>
+
+              <button
+                onClick={() => viewportRef.current?.rotateTurntableBy(Math.PI / 4)}
+                title="Xoay tượng sang phải"
+                className="px-2 py-0.5 rounded-full bg-[#151E2E]/95 border border-slate-700/80 text-slate-200 hover:text-white text-xs font-bold cursor-pointer"
+              >
+                ⟳
+              </button>
+
+              <button
+                onClick={() => viewportRef.current?.zoomBy(1.16)}
+                title="Thu nhỏ"
+                className="px-2 py-0.5 rounded-full bg-[#151E2E]/95 border border-slate-700/80 text-slate-200 hover:text-white text-xs font-bold cursor-pointer"
+              >
+                －
+              </button>
+
+              <button
+                onClick={() => viewportRef.current?.zoomBy(0.86)}
+                title="Phóng to chi tiết"
+                className="px-2 py-0.5 rounded-full bg-[#151E2E]/95 border border-slate-700/80 text-slate-200 hover:text-white text-xs font-bold cursor-pointer"
+              >
+                ＋
+              </button>
+
               <button
                 onClick={() => setIsBottomColorBarCollapsed((prev) => !prev)}
                 className="px-2.5 py-0.5 rounded-full bg-[#151E2E]/95 border border-slate-700/80 text-slate-300 hover:text-white text-[11px] font-bold cursor-pointer"
               >
                 {isBottomColorBarCollapsed ? "▴ Hiện Bảng Màu & Cỡ Bút" : "▾"}
               </button>
-              <button
-                onClick={() => viewportRef.current?.rotateTurntableBy(Math.PI / 4)}
-                title="Xoay phải"
-                className="px-2 py-0.5 rounded-full bg-[#151E2E]/95 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-bold cursor-pointer"
-              >
-                ⟳
-              </button>
             </div>
 
             {!isBottomColorBarCollapsed && (
-              <div className="pointer-events-auto flex items-center gap-2.5 bg-[#151E2E]/95 border border-slate-700/80 rounded-2xl px-3 py-1.5 shadow-2xl overflow-x-auto max-w-[96vw]">
-                {/* PART 1: COREL-STYLE PURE COLOR SWATCHES (12 Ô Màu, không chữ) */}
-                <div className="flex items-center gap-1 shrink-0">
+              <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1.5 bg-[#151E2E]/95 border border-slate-700/80 rounded-2xl px-2.5 sm:px-3 py-1.5 shadow-2xl max-w-full">
+                {/* PART 1: COREL-STYLE PURE COLOR SWATCHES (12 Ô Màu, không chữ - hiển thị đầy đủ trên cả Tablet, Điện Thoại và Máy Tính) */}
+                <div className="flex flex-wrap items-center justify-center gap-1">
                   {PALETTE_COLORS.map((color, idx) => {
                     const isSelected =
                       selectedColor.id === color.id &&
@@ -1023,11 +1075,11 @@ export default function App() {
                   })}
                 </div>
 
-                {/* Divider */}
-                <div className="h-6 w-px bg-slate-700 shrink-0" />
+                {/* Divider on wider screens */}
+                <div className="hidden lg:block h-6 w-px bg-slate-700 shrink-0" />
 
-                {/* PART 2: CHỖ CHỈNH ĐỘ RỘNG PX & LƯU BÚT (Nằm ngay cùng hàng với Bảng Màu!) */}
-                <div className="flex items-center gap-2 bg-slate-900/95 border border-slate-700/80 rounded-xl px-2.5 py-1 shrink-0">
+                {/* PART 2: CHỖ CHỈNH ĐỘ RỘNG PX & LƯU BÚT (Nằm ngay cùng thanh với Bảng Màu!) */}
+                <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-900/95 border border-slate-700/80 rounded-xl px-2 sm:px-2.5 py-1 shrink-0">
                   {/* Live Color + Width Preview Badge */}
                   <div
                     className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg border border-white/40 shadow-inner shrink-0"
@@ -1073,7 +1125,7 @@ export default function App() {
                     }
                     aria-label="Thanh kéo độ rộng bút"
                     title="Kéo chỉnh cỡ bút (1px–60px), thả tay tự lưu vào bảng Bút Lưu"
-                    className="w-24 sm:w-28 accent-emerald-400 cursor-pointer"
+                    className="w-20 sm:w-28 accent-emerald-400 cursor-pointer"
                   />
 
                   <button
@@ -1106,7 +1158,7 @@ export default function App() {
 
       {/* 4. PAUSE / VICTORY MODAL */}
       {(gameState === "paused" || gameState === "victory") && (
-        <div className="absolute inset-0 z-30 bg-slate-950/75 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-30 bg-slate-950/75 flex items-center justify-center p-4">
           <div className="bg-[#151E2E] border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl text-center">
             <h2 className="text-2xl font-bold text-white mb-2">
               {gameState === "victory"
